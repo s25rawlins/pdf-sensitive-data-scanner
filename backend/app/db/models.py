@@ -7,7 +7,7 @@ serialization between the API and database layers.
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -25,6 +25,14 @@ class FindingType(str, Enum):
     """Types of sensitive data findings."""
     EMAIL = "email"
     SSN = "ssn"
+
+
+class MetricType(str, Enum):
+    """Types of metrics tracked."""
+    PROCESSING_TIME = "processing_time"
+    PAGE_COUNT = "page_count"
+    FINDING_COUNT = "finding_count"
+    FILE_SIZE = "file_size"
 
 
 class DocumentBase(BaseModel):
@@ -47,9 +55,32 @@ class Document(DocumentBase):
     document_id: UUID
     upload_timestamp: datetime
     processing_time_ms: float
-    status: ProcessingStatus
+    status: ProcessingStatus = ProcessingStatus.PENDING
     error_message: Optional[str] = None
-    created_at: datetime
+    
+    @field_validator('document_id')
+    def validate_uuid(cls, v):
+        """Validate UUID format."""
+        if isinstance(v, str):
+            try:
+                return UUID(v)
+            except ValueError:
+                raise ValueError('Invalid UUID format')
+        return v
+    
+    @field_validator('file_size')
+    def validate_file_size(cls, v):
+        """Validate file size is positive."""
+        if v < 0:
+            raise ValueError('File size must be non-negative')
+        return v
+    
+    @field_validator('page_count')
+    def validate_page_count(cls, v):
+        """Validate page count is non-negative."""
+        if v < 0:
+            raise ValueError('Page count must be non-negative')
+        return v
     
     class Config:
         """Pydantic configuration."""
@@ -76,6 +107,20 @@ class Finding(FindingBase):
     document_id: UUID
     detected_at: datetime
     
+    @field_validator('page_number')
+    def validate_page_number(cls, v):
+        """Validate page number is positive."""
+        if v < 1:
+            raise ValueError('Page number must be positive')
+        return v
+    
+    @field_validator('confidence')
+    def validate_confidence(cls, v):
+        """Validate confidence is between 0 and 1."""
+        if not 0 <= v <= 1:
+            raise ValueError('Confidence must be between 0 and 1')
+        return v
+    
     class Config:
         """Pydantic configuration."""
         from_attributes = True
@@ -83,9 +128,9 @@ class Finding(FindingBase):
 
 class MetricBase(BaseModel):
     """Base model for metric data."""
-    metric_type: str = Field(..., min_length=1, max_length=50)
+    metric_type: MetricType
     value: float
-    timestamp: datetime
+    recorded_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class MetricCreate(MetricBase):
@@ -97,7 +142,6 @@ class Metric(MetricBase):
     """Complete metric model with all fields."""
     metric_id: UUID
     document_id: UUID
-    created_at: datetime
     
     class Config:
         """Pydantic configuration."""
@@ -114,6 +158,56 @@ class ProcessingRequest(BaseModel):
         if not v.lower().endswith('.pdf'):
             raise ValueError('Filename must have .pdf extension')
         return v
+
+
+# Response Models
+class UploadResponse(BaseModel):
+    """Response model for file upload."""
+    document_id: str
+    filename: str
+    status: str
+    findings_count: int
+    page_count: int
+    processing_time_ms: float
+    message: Optional[str] = None
+
+
+class FindingResponse(BaseModel):
+    """Response model for individual finding."""
+    finding_id: str
+    finding_type: str
+    value: str
+    page_number: int
+    confidence: float
+    context: Optional[str] = None
+
+
+class DocumentWithFindings(BaseModel):
+    """Document with its findings."""
+    document_id: str
+    filename: str
+    upload_timestamp: datetime
+    page_count: int
+    findings: List[FindingResponse]
+    summary: Dict[str, Any]
+
+
+class PaginatedResponse(BaseModel):
+    """Paginated response for findings."""
+    total: int
+    page: int
+    page_size: int
+    findings: List[Dict[str, Any]]
+
+
+class SummaryStatistics(BaseModel):
+    """Summary statistics response."""
+    total_documents: int
+    total_findings: int
+    findings_by_type: Dict[str, int]
+    average_processing_time_ms: float
+    total_pages_processed: int
+    documents_with_findings: int
 
 
 class ProcessingResponse(BaseModel):
@@ -135,15 +229,6 @@ class FindingSummary(BaseModel):
     average_confidence: float = Field(..., ge=0.0, le=1.0)
 
 
-class DocumentWithFindings(Document):
-    """Document model including associated findings."""
-    findings: List[Finding] = Field(default_factory=list)
-    summary: FindingSummary
-    
-    @field_validator('findings')
-    def sort_findings(cls, v: List[Finding]) -> List[Finding]:
-        """Sort findings by page number and type."""
-        return sorted(v, key=lambda f: (f.page_number, f.finding_type.value))
 
 
 class PaginationParams(BaseModel):

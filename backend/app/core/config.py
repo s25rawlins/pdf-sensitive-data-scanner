@@ -40,9 +40,11 @@ class Settings(BaseSettings):
     # ClickHouse settings
     clickhouse_host: str = "localhost"
     clickhouse_port: int = 9000
-    clickhouse_database: str = "pdf_scanner"
+    clickhouse_database: str = "default"
     clickhouse_user: str = "default"
     clickhouse_password: str = ""
+    clickhouse_secure: bool = False
+    clickhouse_verify: bool = True
     
     # Performance settings
     max_concurrent_uploads: int = 10
@@ -65,8 +67,9 @@ class Settings(BaseSettings):
         Returns:
             ClickHouse connection string.
         """
+        protocol = "clickhouse+https" if self.clickhouse_secure else "clickhouse"
         auth = f"{self.clickhouse_user}:{self.clickhouse_password}@" if self.clickhouse_password else ""
-        return f"clickhouse://{auth}{self.clickhouse_host}:{self.clickhouse_port}/{self.clickhouse_database}"
+        return f"{protocol}://{auth}{self.clickhouse_host}:{self.clickhouse_port}/{self.clickhouse_database}"
     
     def validate_settings(self) -> None:
         """

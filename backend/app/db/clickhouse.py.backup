@@ -10,7 +10,10 @@ import logging
 import ssl
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
+
+from clickhouse_driver import Client
+from clickhouse_driver.errors import Error as ClickHouseError
 
 from app.core.config import get_settings
 
@@ -28,10 +31,10 @@ class DatabaseError(Exception):
 
 class ClickHouseClient:
     """
-    Async wrapper for ClickHouse database operations.
+    Async wrapper for ClickHouse Cloud database operations.
     
-    Supports both ClickHouse Cloud (via clickhouse-connect) and 
-    standard ClickHouse (via clickhouse-driver) connections.
+    Provides methods for storing documents, findings, and metrics,
+    as well as querying stored data with secure cloud connection support.
     """
     
     def __init__(
@@ -43,20 +46,18 @@ class ClickHouseClient:
         password: str = "",
         secure: bool = True,
         verify: bool = True,
-        use_cloud_driver: bool = None,
     ):
         """
-        Initialize ClickHouse client.
+        Initialize ClickHouse Cloud client.
         
         Args:
-            host: ClickHouse host.
-            port: ClickHouse port.
+            host: ClickHouse Cloud host.
+            port: ClickHouse port (typically 8443 for cloud).
             database: Database name.
             user: Username.
             password: Password.
-            secure: Use secure connection.
+            secure: Use secure connection (required for cloud).
             verify: Verify SSL certificates.
-            use_cloud_driver: Force use of cloud driver (auto-detected if None).
         """
         self.host = host
         self.port = port
@@ -65,94 +66,40 @@ class ClickHouseClient:
         self.password = password
         self.secure = secure
         self.verify = verify
-        
-        # Auto-detect cloud driver usage based on port and security
-        if use_cloud_driver is None:
-            self.use_cloud_driver = (port == 8443 or port == 8123) and secure
-        else:
-            self.use_cloud_driver = use_cloud_driver
-            
-        self._client: Optional[Any] = None
+        self._client: Optional[Client] = None
         self._initialized = False
+    
+    def _create_client_settings(self) -> dict:
+        """Create connection settings for ClickHouse Cloud."""
+        settings_dict = {
+            'host': self.host,
+            'port': self.port,
+            'user': self.user,
+            'password': self.password,
+            'database': self.database,
+            'secure': self.secure,
+            'verify': self.verify,
+            'compression': False,  # Disabled to avoid clickhouse-cityhash dependency
+            'connect_timeout': 10,
+            'send_receive_timeout': 300,
+            'sync_request_timeout': 5,
+        }
         
-        logger.info(f"Using {'cloud' if self.use_cloud_driver else 'native'} driver for ClickHouse connection")
-    
-    def _create_cloud_client(self):
-        """Create ClickHouse Cloud client using clickhouse-connect."""
-        try:
-            import clickhouse_connect
-            
-            # ClickHouse Cloud connection parameters
-            client = clickhouse_connect.get_client(
-                host=self.host,
-                port=self.port,
-                username=self.user,
-                password=self.password,
-                database=self.database,
-                secure=self.secure,
-                verify=self.verify,
-                compress=False,  # Disable compression to avoid issues
-            )
-            
-            return client
-            
-        except ImportError:
-            raise DatabaseError("clickhouse-connect is required for ClickHouse Cloud connections")
-    
-    def _create_native_client(self):
-        """Create native ClickHouse client using clickhouse-driver."""
-        try:
-            from clickhouse_driver import Client
-            from clickhouse_driver.errors import Error as ClickHouseError
-            
-            # Native driver connection parameters
-            settings_dict = {
-                'host': self.host,
-                'port': self.port,
-                'user': self.user,
-                'password': self.password,
-                'database': self.database,
-                'secure': self.secure,
-                'verify': self.verify,
-                'compression': False,
-                'connect_timeout': 10,
-                'send_receive_timeout': 300,
-                'sync_request_timeout': 5,
-            }
-            
-            if self.secure:
-                settings_dict['ca_certs'] = None
-                settings_dict['verify'] = self.verify
-            
-            return Client(**settings_dict)
-            
-        except ImportError:
-            raise DatabaseError("clickhouse-driver is required for native ClickHouse connections")
-    
-    def _execute_query(self, query: str, params: Any = None) -> Any:
-        """Execute a query using the appropriate driver."""
-        if self.use_cloud_driver:
-            # clickhouse-connect uses different methods for different query types
-            if query.strip().upper().startswith(('INSERT', 'CREATE', 'DROP', 'ALTER', 'DELETE', 'UPDATE')):
-                return self._client.command(query, parameters=params)
-            else:
-                result = self._client.query(query, parameters=params)
-                return result.result_rows if hasattr(result, 'result_rows') else result
-        else:
-            # clickhouse-driver
-            return self._client.execute(query, params)
+        # For ClickHouse Cloud, we need proper SSL settings
+        if self.secure:
+            settings_dict['ca_certs'] = None  # Use system CA bundle
+            settings_dict['verify'] = self.verify
+        
+        return settings_dict
     
     def _initialize_sync(self) -> None:
         """Synchronous initialization of database connection and tables."""
-        # Create client with appropriate driver
-        if self.use_cloud_driver:
-            self._client = self._create_cloud_client()
-        else:
-            self._client = self._create_native_client()
+        # Create client with cloud-specific settings
+        self._client = Client(**self._create_client_settings())
         
         # Test connection
         try:
-            result = self._execute_query("SELECT 1")
+            result = self._client.execute("SELECT 1")
             logger.info(f"ClickHouse connection test successful: {result}")
         except Exception as e:
             logger.error(f"ClickHouse connection test failed: {e}")
@@ -160,13 +107,13 @@ class ClickHouseClient:
         
         # Create database if it doesn't exist
         try:
-            self._execute_query(f"CREATE DATABASE IF NOT EXISTS {self.database}")
+            self._client.execute(f"CREATE DATABASE IF NOT EXISTS {self.database}")
             logger.info(f"Database {self.database} ready")
         except Exception as e:
             logger.warning(f"Could not create database (might already exist): {e}")
         
         # Switch to our database
-        self._execute_query(f"USE {self.database}")
+        self._client.execute(f"USE {self.database}")
         
         # Create tables
         self._create_tables()
@@ -177,7 +124,7 @@ class ClickHouseClient:
         
         # Documents table
         try:
-            self._execute_query("""
+            self._client.execute("""
                 CREATE TABLE IF NOT EXISTS documents (
                     document_id UUID,
                     filename String,
@@ -199,7 +146,7 @@ class ClickHouseClient:
         
         # Findings table
         try:
-            self._execute_query("""
+            self._client.execute("""
                 CREATE TABLE IF NOT EXISTS findings (
                     finding_id UUID DEFAULT generateUUIDv4(),
                     document_id UUID,
@@ -220,7 +167,7 @@ class ClickHouseClient:
         
         # Metrics table with TTL for automatic cleanup
         try:
-            self._execute_query("""
+            self._client.execute("""
                 CREATE TABLE IF NOT EXISTS metrics (
                     metric_id UUID DEFAULT generateUUIDv4(),
                     document_id UUID,
@@ -250,7 +197,7 @@ class ClickHouseClient:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._initialize_sync)
             self._initialized = True
-            logger.info("ClickHouse client initialized successfully")
+            logger.info("ClickHouse Cloud client initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize ClickHouse: {e}")
             raise DatabaseError(f"Database initialization failed: {e}")
@@ -269,10 +216,10 @@ class ClickHouseClient:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
-                self._execute_query,
+                self._client.execute,
                 "SELECT 1"
             )
-            return len(result) > 0 if result else True
+            return len(result) > 0
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             return False
@@ -290,21 +237,21 @@ class ClickHouseClient:
             # Test basic connectivity
             version = await loop.run_in_executor(
                 None,
-                self._execute_query,
+                self._client.execute,
                 "SELECT version()"
             )
             
             # Check database
             current_db = await loop.run_in_executor(
                 None,
-                self._execute_query,
+                self._client.execute,
                 "SELECT currentDatabase()"
             )
             
             # List tables
             tables = await loop.run_in_executor(
                 None,
-                self._execute_query,
+                self._client.execute,
                 "SHOW TABLES"
             )
             
@@ -316,7 +263,6 @@ class ClickHouseClient:
                 "host": self.host,
                 "port": self.port,
                 "secure": self.secure,
-                "driver": "cloud" if self.use_cloud_driver else "native",
             }
         except Exception as e:
             return {
@@ -324,7 +270,6 @@ class ClickHouseClient:
                 "error": str(e),
                 "host": self.host,
                 "port": self.port,
-                "driver": "cloud" if self.use_cloud_driver else "native",
             }
     
     async def insert_document(
@@ -356,50 +301,22 @@ class ClickHouseClient:
         
         try:
             loop = asyncio.get_event_loop()
-            
-            if self.use_cloud_driver:
-                # clickhouse-connect style
-                await loop.run_in_executor(
-                    None,
-                    self._execute_query,
-                    """
-                    INSERT INTO documents (
-                        document_id, filename, file_size, page_count,
-                        upload_timestamp, processing_time_ms, status, error_message
-                    ) VALUES ({document_id:UUID}, {filename:String}, {file_size:UInt64}, 
-                             {page_count:UInt32}, {upload_timestamp:DateTime}, 
-                             {processing_time_ms:Float32}, {status:String}, {error_message:Nullable(String)})
-                    """,
-                    {
-                        "document_id": document_id,
-                        "filename": filename,
-                        "file_size": file_size,
-                        "page_count": page_count,
-                        "upload_timestamp": upload_timestamp,
-                        "processing_time_ms": processing_time_ms,
-                        "status": status,
-                        "error_message": error_message,
-                    }
-                )
-            else:
-                # clickhouse-driver style
-                await loop.run_in_executor(
-                    None,
-                    self._execute_query,
-                    """
-                    INSERT INTO documents (
-                        document_id, filename, file_size, page_count,
-                        upload_timestamp, processing_time_ms, status, error_message
-                    ) VALUES
-                    """,
-                    [(
-                        document_id, filename, file_size, page_count,
-                        upload_timestamp, processing_time_ms, status, error_message
-                    )]
-                )
-            
+            await loop.run_in_executor(
+                None,
+                self._client.execute,
+                """
+                INSERT INTO documents (
+                    document_id, filename, file_size, page_count,
+                    upload_timestamp, processing_time_ms, status, error_message
+                ) VALUES
+                """,
+                [(
+                    document_id, filename, file_size, page_count,
+                    upload_timestamp, processing_time_ms, status, error_message
+                )]
+            )
             logger.debug(f"Inserted document {document_id}")
-        except Exception as e:
+        except ClickHouseError as e:
             logger.error(f"Failed to insert document: {e}")
             raise DatabaseError(f"Failed to insert document: {e}")
     
@@ -428,47 +345,22 @@ class ClickHouseClient:
         
         try:
             loop = asyncio.get_event_loop()
-            
-            if self.use_cloud_driver:
-                # clickhouse-connect style
-                await loop.run_in_executor(
-                    None,
-                    self._execute_query,
-                    """
-                    INSERT INTO findings (
-                        document_id, finding_type, value,
-                        page_number, confidence, context
-                    ) VALUES ({document_id:UUID}, {finding_type:String}, {value:String},
-                             {page_number:UInt32}, {confidence:Float32}, {context:Nullable(String)})
-                    """,
-                    {
-                        "document_id": document_id,
-                        "finding_type": finding_type,
-                        "value": value,
-                        "page_number": page_number,
-                        "confidence": confidence,
-                        "context": context,
-                    }
-                )
-            else:
-                # clickhouse-driver style
-                await loop.run_in_executor(
-                    None,
-                    self._execute_query,
-                    """
-                    INSERT INTO findings (
-                        document_id, finding_type, value,
-                        page_number, confidence, context
-                    ) VALUES
-                    """,
-                    [(
-                        document_id, finding_type, value,
-                        page_number, confidence, context
-                    )]
-                )
-            
+            await loop.run_in_executor(
+                None,
+                self._client.execute,
+                """
+                INSERT INTO findings (
+                    document_id, finding_type, value,
+                    page_number, confidence, context
+                ) VALUES
+                """,
+                [(
+                    document_id, finding_type, value,
+                    page_number, confidence, context
+                )]
+            )
             logger.debug(f"Inserted finding for document {document_id}")
-        except Exception as e:
+        except ClickHouseError as e:
             logger.error(f"Failed to insert finding: {e}")
             raise DatabaseError(f"Failed to insert finding: {e}")
     
@@ -493,40 +385,18 @@ class ClickHouseClient:
         
         try:
             loop = asyncio.get_event_loop()
-            
-            if self.use_cloud_driver:
-                # clickhouse-connect style
-                await loop.run_in_executor(
-                    None,
-                    self._execute_query,
-                    """
-                    INSERT INTO metrics (
-                        document_id, metric_type, value, timestamp
-                    ) VALUES ({document_id:UUID}, {metric_type:String}, 
-                             {value:Float64}, {timestamp:DateTime})
-                    """,
-                    {
-                        "document_id": document_id,
-                        "metric_type": metric_type,
-                        "value": value,
-                        "timestamp": timestamp,
-                    }
-                )
-            else:
-                # clickhouse-driver style
-                await loop.run_in_executor(
-                    None,
-                    self._execute_query,
-                    """
-                    INSERT INTO metrics (
-                        document_id, metric_type, value, timestamp
-                    ) VALUES
-                    """,
-                    [(document_id, metric_type, value, timestamp)]
-                )
-            
+            await loop.run_in_executor(
+                None,
+                self._client.execute,
+                """
+                INSERT INTO metrics (
+                    document_id, metric_type, value, timestamp
+                ) VALUES
+                """,
+                [(document_id, metric_type, value, timestamp)]
+            )
             logger.debug(f"Inserted metric for document {document_id}")
-        except Exception as e:
+        except ClickHouseError as e:
             logger.error(f"Failed to insert metric: {e}")
             # Don't raise error for metrics - they're not critical
     
@@ -545,28 +415,16 @@ class ClickHouseClient:
         
         try:
             loop = asyncio.get_event_loop()
-            
-            if self.use_cloud_driver:
-                result = await loop.run_in_executor(
-                    None,
-                    self._execute_query,
-                    """
-                    SELECT * FROM documents
-                    WHERE document_id = {doc_id:UUID}
-                    """,
-                    {"doc_id": document_id}
-                )
-            else:
-                result = await loop.run_in_executor(
-                    None,
-                    self._execute_query,
-                    """
-                    SELECT * FROM documents
-                    WHERE document_id = %(doc_id)s
-                    FORMAT JSONEachRow
-                    """,
-                    {"doc_id": document_id}
-                )
+            result = await loop.run_in_executor(
+                None,
+                self._client.execute,
+                """
+                SELECT * FROM documents
+                WHERE document_id = %(doc_id)s
+                FORMAT JSONEachRow
+                """,
+                {"doc_id": document_id}
+            )
             
             if result:
                 row = result[0]
@@ -582,7 +440,7 @@ class ClickHouseClient:
                 }
             return None
             
-        except Exception as e:
+        except ClickHouseError as e:
             logger.error(f"Failed to get document: {e}")
             raise DatabaseError(f"Failed to get document: {e}")
     
@@ -614,30 +472,18 @@ class ClickHouseClient:
         params = {}
         
         if doc_id:
-            if self.use_cloud_driver:
-                query += " AND document_id = {doc_id:UUID}"
-            else:
-                query += " AND document_id = %(doc_id)s"
+            query += " AND document_id = %(doc_id)s"
             params["doc_id"] = doc_id
         
         if start_date:
-            if self.use_cloud_driver:
-                query += " AND upload_timestamp >= {start_date:DateTime}"
-            else:
-                query += " AND upload_timestamp >= %(start_date)s"
+            query += " AND upload_timestamp >= %(start_date)s"
             params["start_date"] = start_date
         
         if end_date:
-            if self.use_cloud_driver:
-                query += " AND upload_timestamp <= {end_date:DateTime}"
-            else:
-                query += " AND upload_timestamp <= %(end_date)s"
+            query += " AND upload_timestamp <= %(end_date)s"
             params["end_date"] = end_date
         
-        if self.use_cloud_driver:
-            query += " ORDER BY upload_timestamp DESC LIMIT {limit:UInt32} OFFSET {offset:UInt32}"
-        else:
-            query += " ORDER BY upload_timestamp DESC LIMIT %(limit)s OFFSET %(offset)s"
+        query += " ORDER BY upload_timestamp DESC LIMIT %(limit)s OFFSET %(offset)s"
         params["limit"] = limit
         params["offset"] = offset
         
@@ -645,7 +491,7 @@ class ClickHouseClient:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
-                self._execute_query,
+                self._client.execute,
                 query,
                 params
             )
@@ -665,7 +511,7 @@ class ClickHouseClient:
             
             return documents
             
-        except Exception as e:
+        except ClickHouseError as e:
             logger.error(f"Failed to get documents: {e}")
             raise DatabaseError(f"Failed to get documents: {e}")
     
@@ -693,38 +539,29 @@ class ClickHouseClient:
         params = {}
         
         if doc_id:
-            if self.use_cloud_driver:
-                query += " AND document_id = {doc_id:UUID}"
-            else:
-                query += " AND document_id = %(doc_id)s"
+            query += " AND document_id = %(doc_id)s"
             params["doc_id"] = doc_id
         
         if start_date:
-            if self.use_cloud_driver:
-                query += " AND upload_timestamp >= {start_date:DateTime}"
-            else:
-                query += " AND upload_timestamp >= %(start_date)s"
+            query += " AND upload_timestamp >= %(start_date)s"
             params["start_date"] = start_date
         
         if end_date:
-            if self.use_cloud_driver:
-                query += " AND upload_timestamp <= {end_date:DateTime}"
-            else:
-                query += " AND upload_timestamp <= %(end_date)s"
+            query += " AND upload_timestamp <= %(end_date)s"
             params["end_date"] = end_date
         
         try:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
-                self._execute_query,
+                self._client.execute,
                 query,
                 params
             )
             
             return result[0][0] if result else 0
             
-        except Exception as e:
+        except ClickHouseError as e:
             logger.error(f"Failed to count documents: {e}")
             raise DatabaseError(f"Failed to count documents: {e}")
     
@@ -746,27 +583,16 @@ class ClickHouseClient:
         if not self._initialized:
             raise DatabaseError("Client not initialized")
         
-        if self.use_cloud_driver:
-            query = """
-                SELECT finding_id, document_id, finding_type, value,
-                       page_number, confidence, context, detected_at
-                FROM findings
-                WHERE document_id = {doc_id:UUID}
-            """
-        else:
-            query = """
-                SELECT finding_id, document_id, finding_type, value,
-                       page_number, confidence, context, detected_at
-                FROM findings
-                WHERE document_id = %(doc_id)s
-            """
+        query = """
+            SELECT finding_id, document_id, finding_type, value,
+                   page_number, confidence, context, detected_at
+            FROM findings
+            WHERE document_id = %(doc_id)s
+        """
         params = {"doc_id": document_id}
         
         if finding_type:
-            if self.use_cloud_driver:
-                query += " AND finding_type = {finding_type:String}"
-            else:
-                query += " AND finding_type = %(finding_type)s"
+            query += " AND finding_type = %(finding_type)s"
             params["finding_type"] = finding_type
         
         query += " ORDER BY page_number, detected_at"
@@ -775,7 +601,7 @@ class ClickHouseClient:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
-                self._execute_query,
+                self._client.execute,
                 query,
                 params
             )
@@ -795,7 +621,7 @@ class ClickHouseClient:
             
             return findings
             
-        except Exception as e:
+        except ClickHouseError as e:
             logger.error(f"Failed to get findings: {e}")
             raise DatabaseError(f"Failed to get findings: {e}")
     
@@ -815,7 +641,7 @@ class ClickHouseClient:
             # Get document stats
             doc_stats = await loop.run_in_executor(
                 None,
-                self._execute_query,
+                self._client.execute,
                 """
                 SELECT
                     COUNT(*) as total_documents,
@@ -830,7 +656,7 @@ class ClickHouseClient:
             # Get findings stats
             findings_stats = await loop.run_in_executor(
                 None,
-                self._execute_query,
+                self._client.execute,
                 """
                 SELECT
                     finding_type,
@@ -843,7 +669,7 @@ class ClickHouseClient:
             # Get documents with findings
             docs_with_findings = await loop.run_in_executor(
                 None,
-                self._execute_query,
+                self._client.execute,
                 """
                 SELECT COUNT(DISTINCT document_id)
                 FROM findings
@@ -866,7 +692,7 @@ class ClickHouseClient:
             
             return stats
             
-        except Exception as e:
+        except ClickHouseError as e:
             logger.error(f"Failed to get summary statistics: {e}")
             raise DatabaseError(f"Failed to get summary statistics: {e}")
     
@@ -875,11 +701,7 @@ class ClickHouseClient:
         if self._client:
             try:
                 loop = asyncio.get_event_loop()
-                if self.use_cloud_driver:
-                    # clickhouse-connect doesn't have a disconnect method
-                    pass
-                else:
-                    await loop.run_in_executor(None, self._client.disconnect)
+                await loop.run_in_executor(None, self._client.disconnect)
                 logger.info("ClickHouse connection closed")
             except Exception as e:
                 logger.error(f"Error closing connection: {e}")
