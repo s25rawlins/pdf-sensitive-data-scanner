@@ -166,9 +166,8 @@ class ClickHouseClient:
             logger.warning(f"Could not create database (might already exist): {e}")
         
         # Switch to our database
-        self._execute_query(f"USE {self.database}")
+        self._execute_query(f"USE {self.database}") 
         
-        # Create tables
         self._create_tables()
     
     def _create_tables(self) -> None:
