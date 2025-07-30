@@ -1,0 +1,25 @@
+[flake8]
+max-line-length = 88
+max-complexity = 10
+exclude = 
+    .git,
+    __pycache__,
+    .nox,
+    .venv,
+    venv,
+    *.egg,
+    build,
+    dist
+ignore = 
+    # Black handles whitespace
+    E203,
+    W503,
+    # Line too long (Black handles this)
+    E501,
+    # Import at top of file (we have some conditional imports)
+    E402
+per-file-ignores =
+    # Imported but unused
+    __init__.py: F401
+    # Allow assertions in tests
+    tests/*: S101
