@@ -16,6 +16,7 @@ numpy==1.26.2
 
 # Database
 clickhouse-driver==0.2.6
+clickhouse-connect
 
 # Testing
 pytest==7.4.3

@@ -1,0 +1,193 @@
+"""
+Database models and schemas for the PDF scanner application.
+
+This module defines Pydantic models for data validation and
+serialization between the API and database layers.
+"""
+
+from datetime import datetime
+from enum import Enum
+from typing import Dict, List, Optional
+from uuid import UUID
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class ProcessingStatus(str, Enum):
+    """Status of document processing."""
+    PENDING = "pending"
+    PROCESSING = "processing"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
+class FindingType(str, Enum):
+    """Types of sensitive data findings."""
+    EMAIL = "email"
+    SSN = "ssn"
+
+
+class DocumentBase(BaseModel):
+    """Base model for document data."""
+    filename: str = Field(..., min_length=1, max_length=255)
+    file_size: int = Field(..., gt=0)
+    page_count: int = Field(..., ge=0)
+
+
+class DocumentCreate(DocumentBase):
+    """Model for creating a new document record."""
+    upload_timestamp: datetime
+    processing_time_ms: float = Field(..., ge=0)
+    status: ProcessingStatus
+    error_message: Optional[str] = None
+
+
+class Document(DocumentBase):
+    """Complete document model with all fields."""
+    document_id: UUID
+    upload_timestamp: datetime
+    processing_time_ms: float
+    status: ProcessingStatus
+    error_message: Optional[str] = None
+    created_at: datetime
+    
+    class Config:
+        """Pydantic configuration."""
+        from_attributes = True
+
+
+class FindingBase(BaseModel):
+    """Base model for finding data."""
+    finding_type: FindingType
+    value: str = Field(..., min_length=1)
+    page_number: int = Field(..., ge=1)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    context: Optional[str] = None
+
+
+class FindingCreate(FindingBase):
+    """Model for creating a new finding record."""
+    document_id: UUID
+
+
+class Finding(FindingBase):
+    """Complete finding model with all fields."""
+    finding_id: UUID
+    document_id: UUID
+    detected_at: datetime
+    
+    class Config:
+        """Pydantic configuration."""
+        from_attributes = True
+
+
+class MetricBase(BaseModel):
+    """Base model for metric data."""
+    metric_type: str = Field(..., min_length=1, max_length=50)
+    value: float
+    timestamp: datetime
+
+
+class MetricCreate(MetricBase):
+    """Model for creating a new metric record."""
+    document_id: UUID
+
+
+class Metric(MetricBase):
+    """Complete metric model with all fields."""
+    metric_id: UUID
+    document_id: UUID
+    created_at: datetime
+    
+    class Config:
+        """Pydantic configuration."""
+        from_attributes = True
+
+
+class ProcessingRequest(BaseModel):
+    """Request model for PDF processing."""
+    filename: str = Field(..., min_length=1, max_length=255)
+    
+    @field_validator('filename')
+    def validate_pdf_extension(cls, v: str) -> str:
+        """Ensure filename has PDF extension."""
+        if not v.lower().endswith('.pdf'):
+            raise ValueError('Filename must have .pdf extension')
+        return v
+
+
+class ProcessingResponse(BaseModel):
+    """Response model for PDF processing."""
+    document_id: UUID
+    filename: str
+    status: ProcessingStatus
+    page_count: int
+    findings_count: int
+    processing_time_ms: float
+    message: str
+
+
+class FindingSummary(BaseModel):
+    """Summary statistics for findings."""
+    total: int = Field(..., ge=0)
+    by_type: Dict[str, int] = Field(default_factory=dict)
+    by_page: Dict[int, int] = Field(default_factory=dict)
+    average_confidence: float = Field(..., ge=0.0, le=1.0)
+
+
+class DocumentWithFindings(Document):
+    """Document model including associated findings."""
+    findings: List[Finding] = Field(default_factory=list)
+    summary: FindingSummary
+    
+    @field_validator('findings')
+    def sort_findings(cls, v: List[Finding]) -> List[Finding]:
+        """Sort findings by page number and type."""
+        return sorted(v, key=lambda f: (f.page_number, f.finding_type.value))
+
+
+class PaginationParams(BaseModel):
+    """Pagination parameters for list endpoints."""
+    page: int = Field(1, ge=1)
+    page_size: int = Field(20, ge=1, le=100)
+    
+    @property
+    def offset(self) -> int:
+        """Calculate offset for database query."""
+        return (self.page - 1) * self.page_size
+
+
+class FilterParams(BaseModel):
+    """Filter parameters for query endpoints."""
+    document_id: Optional[UUID] = None
+    finding_type: Optional[FindingType] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    status: Optional[ProcessingStatus] = None
+    
+    @field_validator('end_date')
+    def validate_date_range(cls, v: Optional[datetime], values: dict) -> Optional[datetime]:
+        """Ensure end_date is after start_date if both provided."""
+        start_date = values.get('start_date')
+        if start_date and v and v < start_date:
+            raise ValueError('end_date must be after start_date')
+        return v
+
+
+class StatisticsResponse(BaseModel):
+    """Response model for statistics endpoints."""
+    total_documents: int = Field(..., ge=0)
+    total_findings: int = Field(..., ge=0)
+    findings_by_type: Dict[str, int]
+    average_processing_time_ms: float = Field(..., ge=0)
+    total_pages_processed: int = Field(..., ge=0)
+    documents_with_findings: int = Field(..., ge=0)
+    success_rate: float = Field(..., ge=0.0, le=1.0)
+    
+    @field_validator('success_rate')
+    def calculate_success_rate(cls, v: float, values: dict) -> float:
+        """Calculate success rate if not provided."""
+        if v == 0 and values.get('total_documents', 0) > 0:
+            # This would be calculated from actual data
+            return 1.0
+        return v

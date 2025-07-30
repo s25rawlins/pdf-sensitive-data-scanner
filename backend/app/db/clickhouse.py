@@ -1,0 +1,620 @@
+"""
+ClickHouse database client and operations.
+
+This module provides async database operations for storing and retrieving
+PDF processing results and findings in ClickHouse.
+"""
+
+import asyncio
+import logging
+import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from clickhouse_driver import Client
+from clickhouse_driver.errors import Error as ClickHouseError
+
+from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+# Global client instance
+_db_client: Optional["ClickHouseClient"] = None
+
+
+class DatabaseError(Exception):
+    """Base exception for database operations."""
+    pass
+
+
+class ClickHouseClient:
+    """
+    Async wrapper for ClickHouse database operations.
+    
+    Provides methods for storing documents, findings, and metrics,
+    as well as querying stored data.
+    """
+    
+    def __init__(self, host: str, port: int, database: str, user: str, password: str = ""):
+        """
+        Initialize ClickHouse client.
+        
+        Args:
+            host: ClickHouse host.
+            port: ClickHouse port.
+            database: Database name.
+            user: Username.
+            password: Password (optional).
+        """
+        self.host = host
+        self.port = port
+        self.database = database
+        self.user = user
+        self.password = password
+        self._client: Optional[Client] = None
+        self._initialized = False
+    
+    async def initialize(self) -> None:
+        """
+        Initialize database connection and create tables if needed.
+        
+        Raises:
+            DatabaseError: If initialization fails.
+        """
+        try:
+            # Run in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._initialize_sync)
+            self._initialized = True
+            logger.info("ClickHouse client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize ClickHouse: {e}")
+            raise DatabaseError(f"Database initialization failed: {e}")
+    
+    def _initialize_sync(self) -> None:
+        """Synchronous initialization of database connection and tables."""
+        self._client = Client(
+            host=self.host,
+            port=self.port,
+            database=self.database,
+            user=self.user,
+            password=self.password,
+        )
+        
+        self._client.execute(f"CREATE DATABASE IF NOT EXISTS {self.database}")
+        
+        self._create_tables()
+    
+    def _create_tables(self) -> None:
+        """Create required database tables."""
+
+        self._client.execute("""
+            CREATE TABLE IF NOT EXISTS documents (
+                document_id UUID,
+                filename String,
+                file_size UInt64,
+                page_count UInt32,
+                upload_timestamp DateTime,
+                processing_time_ms Float32,
+                status String,
+                error_message Nullable(String),
+                created_at DateTime DEFAULT now()
+            ) ENGINE = MergeTree()
+            ORDER BY (upload_timestamp, document_id)
+        """)
+        
+        self._client.execute("""
+            CREATE TABLE IF NOT EXISTS findings (
+                finding_id UUID DEFAULT generateUUIDv4(),
+                document_id UUID,
+                finding_type String,
+                value String,
+                page_number UInt32,
+                confidence Float32,
+                context Nullable(String),
+                detected_at DateTime DEFAULT now()
+            ) ENGINE = MergeTree()
+            ORDER BY (document_id, finding_type, detected_at)
+        """)
+        
+        self._client.execute("""
+            CREATE TABLE IF NOT EXISTS metrics (
+                metric_id UUID DEFAULT generateUUIDv4(),
+                document_id UUID,
+                metric_type String,
+                value Float64,
+                timestamp DateTime,
+                created_at DateTime DEFAULT now()
+            ) ENGINE = MergeTree()
+            ORDER BY (timestamp, metric_type)
+            TTL created_at + INTERVAL 30 DAY
+        """)
+    
+    async def health_check(self) -> bool:
+        """
+        Check database connection health.
+        
+        Returns:
+            True if healthy, False otherwise.
+        """
+        if not self._initialized or not self._client:
+            return False
+        
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                self._client.execute,
+                "SELECT 1"
+            )
+            return len(result) > 0
+        except Exception as e:
+            logger.error(f"Health check failed: {e}")
+            return False
+    
+    async def insert_document(
+        self,
+        document_id: str,
+        filename: str,
+        file_size: int,
+        page_count: int,
+        upload_timestamp: datetime,
+        processing_time_ms: float,
+        status: str,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """
+        Insert document metadata into database.
+        
+        Args:
+            document_id: Unique document identifier.
+            filename: Original filename.
+            file_size: File size in bytes.
+            page_count: Number of pages.
+            upload_timestamp: Upload time.
+            processing_time_ms: Processing duration.
+            status: Processing status.
+            error_message: Optional error message.
+        """
+        if not self._initialized:
+            raise DatabaseError("Client not initialized")
+        
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                self._client.execute,
+                """
+                INSERT INTO documents (
+                    document_id, filename, file_size, page_count,
+                    upload_timestamp, processing_time_ms, status, error_message
+                ) VALUES
+                """,
+                [(
+                    document_id, filename, file_size, page_count,
+                    upload_timestamp, processing_time_ms, status, error_message
+                )]
+            )
+        except ClickHouseError as e:
+            logger.error(f"Failed to insert document: {e}")
+            raise DatabaseError(f"Failed to insert document: {e}")
+    
+    async def insert_finding(
+        self,
+        document_id: str,
+        finding_type: str,
+        value: str,
+        page_number: int,
+        confidence: float,
+        context: Optional[str] = None,
+    ) -> None:
+        """
+        Insert finding into database.
+        
+        Args:
+            document_id: Associated document ID.
+            finding_type: Type of finding (email, ssn).
+            value: Detected value.
+            page_number: Page number.
+            confidence: Confidence score.
+            context: Optional surrounding context.
+        """
+        if not self._initialized:
+            raise DatabaseError("Client not initialized")
+        
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                self._client.execute,
+                """
+                INSERT INTO findings (
+                    document_id, finding_type, value,
+                    page_number, confidence, context
+                ) VALUES
+                """,
+                [(
+                    document_id, finding_type, value,
+                    page_number, confidence, context
+                )]
+            )
+        except ClickHouseError as e:
+            logger.error(f"Failed to insert finding: {e}")
+            raise DatabaseError(f"Failed to insert finding: {e}")
+    
+    async def insert_metric(
+        self,
+        document_id: str,
+        metric_type: str,
+        value: float,
+        timestamp: datetime,
+    ) -> None:
+        """
+        Insert performance metric.
+        
+        Args:
+            document_id: Associated document ID.
+            metric_type: Type of metric.
+            value: Metric value.
+            timestamp: Metric timestamp.
+        """
+        if not self._initialized:
+            raise DatabaseError("Client not initialized")
+        
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                self._client.execute,
+                """
+                INSERT INTO metrics (
+                    document_id, metric_type, value, timestamp
+                ) VALUES
+                """,
+                [(document_id, metric_type, value, timestamp)]
+            )
+        except ClickHouseError as e:
+            logger.error(f"Failed to insert metric: {e}")
+            # Don't raise error for metrics - they're not critical
+    
+    async def get_document(self, document_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get document metadata by ID.
+        
+        Args:
+            document_id: Document identifier.
+            
+        Returns:
+            Document metadata or None if not found.
+        """
+        if not self._initialized:
+            raise DatabaseError("Client not initialized")
+        
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                self._client.execute,
+                """
+                SELECT * FROM documents
+                WHERE document_id = %(doc_id)s
+                """,
+                {"doc_id": document_id}
+            )
+            
+            if result:
+                row = result[0]
+                return {
+                    "document_id": str(row[0]),
+                    "filename": row[1],
+                    "file_size": row[2],
+                    "page_count": row[3],
+                    "upload_timestamp": row[4],
+                    "processing_time_ms": row[5],
+                    "status": row[6],
+                    "error_message": row[7],
+                }
+            return None
+            
+        except ClickHouseError as e:
+            logger.error(f"Failed to get document: {e}")
+            raise DatabaseError(f"Failed to get document: {e}")
+    
+    async def get_documents(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        doc_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get documents with pagination and filtering.
+        
+        Args:
+            limit: Maximum results.
+            offset: Results offset.
+            doc_id: Optional document ID filter.
+            start_date: Optional start date filter.
+            end_date: Optional end date filter.
+            
+        Returns:
+            List of document metadata.
+        """
+        if not self._initialized:
+            raise DatabaseError("Client not initialized")
+        
+        query = "SELECT * FROM documents WHERE 1=1"
+        params = {}
+        
+        if doc_id:
+            query += " AND document_id = %(doc_id)s"
+            params["doc_id"] = doc_id
+        
+        if start_date:
+            query += " AND upload_timestamp >= %(start_date)s"
+            params["start_date"] = start_date
+        
+        if end_date:
+            query += " AND upload_timestamp <= %(end_date)s"
+            params["end_date"] = end_date
+        
+        query += " ORDER BY upload_timestamp DESC LIMIT %(limit)s OFFSET %(offset)s"
+        params["limit"] = limit
+        params["offset"] = offset
+        
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                self._client.execute,
+                query,
+                params
+            )
+            
+            documents = []
+            for row in result:
+                documents.append({
+                    "document_id": str(row[0]),
+                    "filename": row[1],
+                    "file_size": row[2],
+                    "page_count": row[3],
+                    "upload_timestamp": row[4],
+                    "processing_time_ms": row[5],
+                    "status": row[6],
+                    "error_message": row[7],
+                })
+            
+            return documents
+            
+        except ClickHouseError as e:
+            logger.error(f"Failed to get documents: {e}")
+            raise DatabaseError(f"Failed to get documents: {e}")
+    
+    async def count_documents(
+        self,
+        doc_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> int:
+        """
+        Count documents with optional filtering.
+        
+        Args:
+            doc_id: Optional document ID filter.
+            start_date: Optional start date filter.
+            end_date: Optional end date filter.
+            
+        Returns:
+            Total count.
+        """
+        if not self._initialized:
+            raise DatabaseError("Client not initialized")
+        
+        query = "SELECT COUNT(*) FROM documents WHERE 1=1"
+        params = {}
+        
+        if doc_id:
+            query += " AND document_id = %(doc_id)s"
+            params["doc_id"] = doc_id
+        
+        if start_date:
+            query += " AND upload_timestamp >= %(start_date)s"
+            params["start_date"] = start_date
+        
+        if end_date:
+            query += " AND upload_timestamp <= %(end_date)s"
+            params["end_date"] = end_date
+        
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                self._client.execute,
+                query,
+                params
+            )
+            
+            return result[0][0] if result else 0
+            
+        except ClickHouseError as e:
+            logger.error(f"Failed to count documents: {e}")
+            raise DatabaseError(f"Failed to count documents: {e}")
+    
+    async def get_findings_by_document(
+        self,
+        document_id: str,
+        finding_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get findings for a specific document.
+        
+        Args:
+            document_id: Document identifier.
+            finding_type: Optional finding type filter.
+            
+        Returns:
+            List of findings.
+        """
+        if not self._initialized:
+            raise DatabaseError("Client not initialized")
+        
+        query = """
+            SELECT finding_id, document_id, finding_type, value,
+                   page_number, confidence, context, detected_at
+            FROM findings
+            WHERE document_id = %(doc_id)s
+        """
+        params = {"doc_id": document_id}
+        
+        if finding_type:
+            query += " AND finding_type = %(finding_type)s"
+            params["finding_type"] = finding_type
+        
+        query += " ORDER BY page_number, detected_at"
+        
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                self._client.execute,
+                query,
+                params
+            )
+            
+            findings = []
+            for row in result:
+                findings.append({
+                    "finding_id": str(row[0]),
+                    "document_id": str(row[1]),
+                    "finding_type": row[2],
+                    "value": row[3],
+                    "page_number": row[4],
+                    "confidence": row[5],
+                    "context": row[6],
+                    "detected_at": row[7],
+                })
+            
+            return findings
+            
+        except ClickHouseError as e:
+            logger.error(f"Failed to get findings: {e}")
+            raise DatabaseError(f"Failed to get findings: {e}")
+    
+    async def get_summary_statistics(self) -> Dict[str, Any]:
+        """
+        Get overall summary statistics.
+        
+        Returns:
+            Dictionary with various statistics.
+        """
+        if not self._initialized:
+            raise DatabaseError("Client not initialized")
+        
+        try:
+            loop = asyncio.get_event_loop()
+            
+            doc_stats = await loop.run_in_executor(
+                None,
+                self._client.execute,
+                """
+                SELECT
+                    COUNT(*) as total_documents,
+                    SUM(page_count) as total_pages,
+                    AVG(processing_time_ms) as avg_processing_time,
+                    COUNT(DISTINCT document_id) as unique_documents
+                FROM documents
+                WHERE status = 'success'
+                """
+            )
+            
+            findings_stats = await loop.run_in_executor(
+                None,
+                self._client.execute,
+                """
+                SELECT
+                    finding_type,
+                    COUNT(*) as count
+                FROM findings
+                GROUP BY finding_type
+                """
+            )
+            
+            docs_with_findings = await loop.run_in_executor(
+                None,
+                self._client.execute,
+                """
+                SELECT COUNT(DISTINCT document_id)
+                FROM findings
+                """
+            )
+            
+            # Build response
+            stats = {
+                "total_documents": doc_stats[0][0] if doc_stats else 0,
+                "total_pages": doc_stats[0][1] if doc_stats else 0,
+                "avg_processing_time": doc_stats[0][2] if doc_stats else 0,
+                "documents_with_findings": docs_with_findings[0][0] if docs_with_findings else 0,
+                "findings_by_type": {},
+                "total_findings": 0,
+            }
+            
+            for row in findings_stats:
+                stats["findings_by_type"][row[0]] = row[1]
+                stats["total_findings"] += row[1]
+            
+            return stats
+            
+        except ClickHouseError as e:
+            logger.error(f"Failed to get summary statistics: {e}")
+            raise DatabaseError(f"Failed to get summary statistics: {e}")
+    
+    async def close(self) -> None:
+        """Close database connection."""
+        if self._client:
+            try:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._client.disconnect)
+                logger.info("ClickHouse connection closed")
+            except Exception as e:
+                logger.error(f"Error closing connection: {e}")
+
+
+def create_clickhouse_client() -> ClickHouseClient:
+    """
+    Factory function to create ClickHouse client.
+    
+    Returns:
+        Configured ClickHouseClient instance.
+    """
+    return ClickHouseClient(
+        host=settings.clickhouse_host,
+        port=settings.clickhouse_port,
+        database=settings.clickhouse_database,
+        user=settings.clickhouse_user,
+        password=settings.clickhouse_password,
+    )
+
+
+def get_db_client() -> ClickHouseClient:
+    """
+    Get the global database client instance.
+    
+    Returns:
+        ClickHouseClient instance.
+        
+    Raises:
+        DatabaseError: If client not initialized.
+    """
+    global _db_client
+    
+    if not _db_client:
+        # Import here to avoid circular import
+        from app.main import db_client
+        _db_client = db_client
+    
+    if not _db_client:
+        raise DatabaseError("Database client not initialized")
+    
+    return _db_client
