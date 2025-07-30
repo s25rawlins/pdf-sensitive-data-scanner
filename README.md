@@ -41,6 +41,31 @@ docker-compose up -d
 # Application will be available at http://localhost:3000
 ```
 
+### Running with Startup Scripts
+
+The project includes convenient startup and shutdown scripts for production deployment:
+
+```bash
+# Start the application
+./startup.sh
+
+# The script will:
+# - Check and free required ports (3000, 8000)
+# - Build the frontend for production
+# - Start backend with 4 Uvicorn workers
+# - Start frontend Next.js server
+# - Display service URLs and status
+
+# Stop the application gracefully
+./shutdown.sh
+
+# The shutdown script will:
+# - Send SIGTERM for graceful shutdown
+# - Wait for processes to terminate
+# - Force kill if necessary
+# - Verify ports are freed
+```
+
 ### Local Development
 
 #### Backend Setup
