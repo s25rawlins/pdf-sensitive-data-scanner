@@ -1,7 +1,7 @@
 export interface Finding {
  finding_id: string;
  document_id: string;
- finding_type: 'email' | 'ssn';
+ finding_type: 'email' | 'ssn' | 'phone';
  value: string;
  page_number: number;
  confidence: number;
@@ -26,6 +26,7 @@ export interface DocumentWithFindings extends Document {
    total: number;
    email?: number;
    ssn?: number;
+   phone?: number;
  };
 }
 
@@ -52,6 +53,7 @@ export interface Statistics {
  findings_by_type: {
    email: number;
    ssn: number;
+   phone?: number;
  };
  average_processing_time_ms: number;
  total_pages_processed: number;
