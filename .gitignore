@@ -49,6 +49,7 @@ dist/
 test_pdfs/
 temp/
 uploads/
+cw/
 
 # ClickHouse
 clickhouse-data/
