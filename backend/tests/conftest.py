@@ -12,7 +12,6 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-# Set test environment variables before importing app
 os.environ["TESTING"] = "true"
 os.environ["CLICKHOUSE_HOST"] = "localhost"
 os.environ["CLICKHOUSE_PORT"] = "9000"
@@ -29,7 +28,6 @@ def test_client() -> Generator[TestClient, None, None]:
     """
     from app.main import app
     
-    # Create client with proper base URL
     client = TestClient(app, base_url="http://localhost")
     
     # Override the host header for all requests
@@ -190,7 +188,6 @@ def sample_findings():
     ]
 
 
-# Configure pytest
 def pytest_configure(config):
     """Configure pytest with custom markers."""
     config.addinivalue_line(
@@ -201,11 +198,9 @@ def pytest_configure(config):
     )
 
 
-# Test environment setup
 def pytest_sessionstart(session):
     """Setup test environment before running tests."""
-    # Ensure we're in testing mode
+
     os.environ["TESTING"] = "true"
     
-    # Disable logging during tests unless explicitly needed
     import logging

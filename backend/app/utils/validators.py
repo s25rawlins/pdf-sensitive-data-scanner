@@ -266,8 +266,8 @@ def sanitize_filename(filename: Optional[str]) -> str:
 def validate_pdf_content_legacy(file_content: bytes, max_size: Optional[int] = None) -> bool:
     """Legacy function for PDF content validation."""
     try:
-        if max_size:
-            validate_file_size(len(file_content))
+        if max_size and len(file_content) > max_size:
+            return False
         validate_pdf_content(file_content)
         return True
     except HTTPException:

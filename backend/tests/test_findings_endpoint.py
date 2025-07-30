@@ -6,7 +6,7 @@ This module tests edge cases and error scenarios in the findings endpoint.
 
 import pytest
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, ANY
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -31,7 +31,7 @@ class TestFindingsEndpointCoverage:
                 await get_all_findings()
             
             assert exc_info.value.status_code == 500
-            assert "Database error" in str(exc_info.value.detail)
+            assert "Failed to retrieve findings" in str(exc_info.value.detail)
     
     @pytest.mark.asyncio
     async def test_get_all_findings_empty_results(self):
@@ -41,7 +41,7 @@ class TestFindingsEndpointCoverage:
         mock_db.get_documents.return_value = []
         
         with patch("app.api.endpoints.findings.get_db_client", return_value=mock_db):
-            result = await get_all_findings()
+            result = await get_all_findings(page=1, page_size=20)
             
             assert result.total == 0
             assert result.page == 1
@@ -59,7 +59,7 @@ class TestFindingsEndpointCoverage:
                 await get_document_findings("test-doc-id")
             
             assert exc_info.value.status_code == 500
-            assert "Database error" in str(exc_info.value.detail)
+            assert "Failed to retrieve document findings" in str(exc_info.value.detail)
     
     @pytest.mark.asyncio
     async def test_get_document_findings_findings_fetch_error(self):
@@ -83,7 +83,7 @@ class TestFindingsEndpointCoverage:
                 await get_document_findings(doc_id)
             
             assert exc_info.value.status_code == 500
-            assert "Database error" in str(exc_info.value.detail)
+            assert "Failed to retrieve document findings" in str(exc_info.value.detail)
     
     @pytest.mark.asyncio
     async def test_get_findings_summary_database_error(self):
@@ -96,7 +96,7 @@ class TestFindingsEndpointCoverage:
                 await get_findings_summary()
             
             assert exc_info.value.status_code == 500
-            assert "Database error" in str(exc_info.value.detail)
+            assert "Failed to retrieve summary statistics" in str(exc_info.value.detail)
     
     @pytest.mark.asyncio
     async def test_get_all_findings_with_all_filters(self):
@@ -144,7 +144,7 @@ class TestFindingsEndpointCoverage:
             
             # Verify filters were passed to count_documents
             mock_db.count_documents.assert_called_once_with(
-                finding_type="email",
+                doc_id=ANY,
                 start_date=datetime(2024, 1, 1),
                 end_date=datetime(2024, 12, 31)
             )

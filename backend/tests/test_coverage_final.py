@@ -23,17 +23,17 @@ class TestFinalCoverage:
             
             # Test detection with logging
             text = "My email is test@example.com"
-            findings = detector.detect_all(text)
+            findings = detector.detect(text)
             
             assert len(findings) == 1
-            assert findings[0].type == "email"
+            assert findings[0].type.value == "email"
     
     def test_pdf_processor_fallback_extraction(self):
         """Test PDF processor fallback text extraction."""
         processor = PDFProcessor()
         
         # Mock PyPDF2 to fail, forcing pdfplumber fallback
-        with patch("app.services.pdf_processor.PyPDF2.PdfReader", side_effect=Exception("PyPDF2 failed")):
+        with patch("app.services.pdf_processor.PdfReader", side_effect=Exception("PyPDF2 failed")):
             with patch("app.services.pdf_processor.pdfplumber") as mock_pdfplumber:
                 # Mock pdfplumber to return text
                 mock_pdf = MagicMock()
@@ -76,7 +76,7 @@ class TestFinalCoverage:
         detector = SensitiveDataDetector()
         
         text = "This is just regular text with no sensitive information."
-        findings = detector.detect_all(text)
+        findings = detector.detect(text)
         
         assert len(findings) == 0
     

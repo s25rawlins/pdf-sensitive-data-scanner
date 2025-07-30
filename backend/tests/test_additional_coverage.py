@@ -7,6 +7,8 @@ This module tests remaining uncovered lines in various modules.
 import pytest
 from unittest.mock import patch, MagicMock
 
+from uuid import UUID
+
 from app.core.detector import SensitiveDataDetector
 from app.db.models import (
     Document, Finding, Metric, DocumentWithFindings,
@@ -25,7 +27,7 @@ class TestDetectorAdditional:
         with patch("app.core.detector.logger") as mock_logger:
             # Test with text that triggers logging
             text = "Contact us at test@example.com or 123-45-6789"
-            findings = detector.detect_all(text)
+            findings = detector.detect(text)
             
             # Should have findings
             assert len(findings) == 2
@@ -39,12 +41,12 @@ class TestDetectorAdditional:
         
         # Test with text containing multiple spaces
         text = "Email:    test@example.com    SSN:    123-45-6789"
-        findings = detector.detect_all(text)
+        findings = detector.detect(text)
         assert len(findings) == 2
         
         # Test with newlines
         text = "Email:\ntest@example.com\nSSN:\n123-45-6789"
-        findings = detector.detect_all(text)
+        findings = detector.detect(text)
         assert len(findings) == 2
 
 
@@ -65,7 +67,7 @@ class TestModelsAdditional:
             upload_timestamp=datetime.utcnow(),
             processing_time_ms=100.0
         )
-        assert isinstance(doc.document_id, str)
+        assert isinstance(doc.document_id, (str, UUID))
     
     def test_finding_field_validators(self):
         """Test Finding model field validators."""

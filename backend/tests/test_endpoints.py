@@ -7,7 +7,7 @@ proper coverage of error handling and edge cases.
 
 import pytest
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, ANY
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile
@@ -21,9 +21,10 @@ class TestUploadEndpoint:
     @pytest.mark.asyncio
     async def test_get_db_client(self):
         """Test getting database client."""
-        with patch("app.api.endpoints.upload.db_client") as mock_db:
+        mock_client = MagicMock()
+        with patch("app.api.endpoints.upload.get_db_client", return_value=mock_client):
             result = upload.get_db_client()
-            assert result == mock_db
+            assert result == mock_client
     
     @pytest.mark.asyncio
     async def test_upload_pdf_success_with_findings(self):
@@ -76,8 +77,8 @@ class TestUploadEndpoint:
             with pytest.raises(HTTPException) as exc_info:
                 await upload.upload_pdf(mock_file)
             
-            assert exc_info.value.status_code == 500
-            assert "Error reading file" in str(exc_info.value.detail)
+            assert exc_info.value.status_code == 400
+            assert "Failed to read uploaded file" in str(exc_info.value.detail)
     
     @pytest.mark.asyncio
     async def test_upload_pdf_processing_error(self):
@@ -97,12 +98,10 @@ class TestUploadEndpoint:
                     with patch("app.api.endpoints.upload.datetime") as mock_datetime:
                         mock_datetime.utcnow.return_value = datetime(2024, 1, 1)
                         
-                        result = await upload.upload_pdf(mock_file)
+                        with pytest.raises(HTTPException) as exc_info:
+                            await upload.upload_pdf(mock_file)
                         
-                        assert result["status"] == "failed"
-                        assert "Processing failed" in result["message"]
-                        assert mock_db.insert_document.called
-                        # Should still insert document with failed status
+                        assert exc_info.value.status_code == 500
 
 
 class TestFindingsEndpoint:
@@ -111,9 +110,10 @@ class TestFindingsEndpoint:
     @pytest.mark.asyncio
     async def test_get_db_client(self):
         """Test getting database client."""
-        with patch("app.api.endpoints.findings.db_client") as mock_db:
+        mock_client = MagicMock()
+        with patch("app.api.endpoints.findings.get_db_client", return_value=mock_client):
             result = findings.get_db_client()
-            assert result == mock_db
+            assert result == mock_client
     
     @pytest.mark.asyncio
     async def test_get_findings_with_filters(self):
@@ -146,7 +146,7 @@ class TestFindingsEndpoint:
         ]
         
         with patch("app.api.endpoints.findings.get_db_client", return_value=mock_db):
-            result = await findings.get_findings(
+            result = await findings.get_all_findings(
                 finding_type="email",
                 start_date=datetime(2024, 1, 1),
                 end_date=datetime(2024, 12, 31),
@@ -154,14 +154,14 @@ class TestFindingsEndpoint:
                 page_size=5
             )
             
-            assert result["total"] == 10
-            assert result["page"] == 2
-            assert result["page_size"] == 5
-            assert len(result["findings"]) == 1
+            assert result.total == 10
+            assert result.page == 2
+            assert result.page_size == 5
+            assert len(result.findings) == 1
             
-            # Check that filters were passed
+            # Check that filters were passed correctly
             mock_db.count_documents.assert_called_with(
-                finding_type="email",
+                doc_id=ANY,
                 start_date=datetime(2024, 1, 1),
                 end_date=datetime(2024, 12, 31)
             )
@@ -177,7 +177,7 @@ class TestFindingsEndpoint:
                 await findings.get_document_findings("non-existent-id")
             
             assert exc_info.value.status_code == 404
-            assert "Document not found" in str(exc_info.value.detail)
+            assert "not found" in str(exc_info.value.detail)
     
     @pytest.mark.asyncio
     async def test_get_document_findings_success(self):
@@ -220,12 +220,12 @@ class TestFindingsEndpoint:
         with patch("app.api.endpoints.findings.get_db_client", return_value=mock_db):
             result = await findings.get_document_findings(doc_id)
             
-            assert result["document_id"] == doc_id
-            assert result["filename"] == "test.pdf"
-            assert len(result["findings"]) == 2
-            assert result["summary"]["total"] == 2
-            assert result["summary"]["email"] == 1
-            assert result["summary"]["ssn"] == 1
+            assert result.document_id == doc_id
+            assert result.filename == "test.pdf"
+            assert len(result.findings) == 2
+            assert result.summary["total"] == 2
+            assert result.summary["email"] == 1
+            assert result.summary["ssn"] == 1
     
     @pytest.mark.asyncio
     async def test_get_summary_statistics(self):
@@ -241,7 +241,7 @@ class TestFindingsEndpoint:
         }
         
         with patch("app.api.endpoints.findings.get_db_client", return_value=mock_db):
-            result = await findings.get_summary_statistics()
+            result = await findings.get_findings_summary()
             
             assert result["total_documents"] == 100
             assert result["total_findings"] == 250

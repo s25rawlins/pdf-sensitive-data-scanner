@@ -130,12 +130,12 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
     
     # Acquire semaphore for concurrent upload limiting
     async with upload_semaphore:
+        # Get database client early so it's available in exception handlers
+        db_client = get_db_client()
+        
         try:
             logger.info(f"Processing PDF: {file.filename} (ID: {document_id})")
             result = await process_pdf_async(pdf_data, file.filename)
-            
-            # Store results in ClickHouse
-            db_client = get_db_client()
             
             # Store document metadata
             await db_client.insert_document(
@@ -161,12 +161,16 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
             
             # Store metrics if enabled
             if settings.enable_metrics:
-                await db_client.insert_metric(
-                    document_id=document_id,
-                    metric_type="processing_time",
-                    value=result.processing_time_ms,
-                    timestamp=upload_timestamp,
-                )
+                try:
+                    await db_client.insert_metric(
+                        document_id=document_id,
+                        metric_type="processing_time",
+                        value=result.processing_time_ms,
+                        timestamp=upload_timestamp,
+                    )
+                except Exception as e:
+                    # Log metric insertion error but don't fail the request
+                    logger.error(f"Failed to insert metric: {e}")
             
             logger.info(f"Successfully processed {file.filename} with {len(result.findings)} findings")
             

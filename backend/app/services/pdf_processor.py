@@ -12,9 +12,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, Dict, List, Optional, Union, Tuple
 
-import PyPDF2
+import pypdf
 import pdfplumber
-from PyPDF2.errors import PdfReadError
+from pypdf.errors import PdfReadError
 
 from app.core.detector import Finding, FindingType, create_detector, SensitiveDataDetector
 
@@ -115,17 +115,17 @@ class PDFProcessor:
         """
         try:
             pdf_stream = io.BytesIO(pdf_data)
-            pdf_reader = PyPDF2.PdfReader(pdf_stream)
+            pdf_reader = pypdf.PdfReader(pdf_stream)
             return pdf_reader.is_encrypted
         except Exception:
             return False
     
     def _extract_with_pypdf2(self, pdf_data: bytes) -> Tuple[str, List[str]]:
-        """Extract text using PyPDF2 as fallback method."""
+        """Extract text using pypdf as fallback method."""
         page_texts = []
         
         pdf_stream = io.BytesIO(pdf_data)
-        pdf_reader = PyPDF2.PdfReader(pdf_stream)
+        pdf_reader = pypdf.PdfReader(pdf_stream)
         
         for page_num in range(len(pdf_reader.pages)):
             try:
@@ -169,9 +169,9 @@ class PDFProcessor:
         try:
             return self._extract_with_pdfplumber(pdf_data)
         except Exception as e:
-            logger.warning(f"pdfplumber extraction failed, trying PyPDF2: {e}")
+            logger.warning(f"pdfplumber extraction failed, trying pypdf: {e}")
         
-        # Fallback to PyPDF2
+        # Fallback to pypdf
         try:
             return self._extract_with_pypdf2(pdf_data)
         except Exception as e:
@@ -243,14 +243,11 @@ class PDFProcessor:
             raise PDFProcessingError(f"Cannot process password-protected PDF: {filename}")
         
         try:
-            # Extract text from PDF
             extracted_text, page_texts = self._extract_text_from_pdf(pdf_data)
             page_count = len(page_texts)
             
-            # Detect sensitive data
             findings = self._detect_sensitive_data_by_page(page_texts)
             
-            # Calculate processing time
             processing_time_ms = (time.time() - start_time) * 1000
             
             logger.info(
@@ -334,10 +331,8 @@ def create_pdf_processor(max_file_size: Optional[int] = None) -> PDFProcessor:
 
 
 if __name__ == "__main__":
-    # Example usage
     processor = create_pdf_processor()
-    
-    # Process a sample PDF file
+
     sample_pdf_path = Path("sample.pdf")
     if sample_pdf_path.exists():
         result = processor.process_pdf_from_path(sample_pdf_path)

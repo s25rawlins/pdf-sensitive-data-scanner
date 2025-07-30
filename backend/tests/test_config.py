@@ -15,14 +15,16 @@ class TestSettings:
     
     def test_settings_defaults(self):
         """Test default settings values."""
-        settings = Settings()
-        
-        assert settings.app_name == "PDF Sensitive Data Scanner"
-        assert settings.app_version == "1.0.0"
-        assert settings.debug is False
-        assert settings.max_upload_size == 50 * 1024 * 1024
-        assert settings.allowed_file_extensions == [".pdf"]
-        assert settings.clickhouse_database == "pdf_scanner"
+        # Clear environment variables that might interfere
+        with patch.dict("os.environ", {}, clear=True):
+            settings = Settings()
+            
+            assert settings.app_name == "PDF Sensitive Data Scanner"
+            assert settings.app_version == "1.0.0"
+            assert settings.debug is False
+            assert settings.max_upload_size == 50 * 1024 * 1024
+            assert settings.allowed_file_extensions == [".pdf"]
+            assert settings.clickhouse_database == "default"
     
     def test_settings_from_env(self):
         """Test settings from environment variables."""
@@ -55,16 +57,23 @@ class TestSettings:
             clickhouse_port=9000,
             clickhouse_database="test_db",
             clickhouse_user="default",
-            clickhouse_password=""
+            clickhouse_password="",
+            clickhouse_secure=False
         )
         
         url = settings.get_clickhouse_url()
         assert url == "clickhouse://localhost:9000/test_db"
         
-        # With password
+        # With password and user
         settings.clickhouse_password = "secret"
+        settings.clickhouse_user = "default"
         url = settings.get_clickhouse_url()
         assert url == "clickhouse://default:secret@localhost:9000/test_db"
+        
+        # With secure connection
+        settings.clickhouse_secure = True
+        url = settings.get_clickhouse_url()
+        assert url == "clickhouse+https://default:secret@localhost:9000/test_db"
     
     def test_validate_settings_valid(self):
         """Test settings validation with valid values."""

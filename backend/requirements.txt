@@ -4,7 +4,7 @@ uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
 # PDF processing
-PyPDF2==3.0.1
+pypdf==5.9.0
 pdfplumber==0.10.3
 pymupdf==1.23.8
 reportlab==4.0.7

@@ -13,7 +13,7 @@ from typing import BinaryIO
 from unittest.mock import Mock, patch
 
 import pytest
-from PyPDF2 import PdfWriter, PdfReader
+from pypdf import PdfWriter, PdfReader
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 

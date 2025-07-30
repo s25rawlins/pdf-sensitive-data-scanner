@@ -114,6 +114,24 @@ class SensitiveDataDetector:
             logger.error(f"Unexpected error during detection: {e}")
             raise DetectorError(f"Detection failed: {e}") from e
     
+    def detect_all(self, text: Optional[str]) -> List[Finding]:
+        """
+        Detect all types of sensitive data in the given text.
+        
+        This method is an alias for detect() to maintain backward compatibility
+        and provide a more explicit method name.
+        
+        Args:
+            text: The text to scan for sensitive data.
+            
+        Returns:
+            List of Finding objects sorted by position in text.
+            
+        Raises:
+            DetectorError: If detection fails unexpectedly.
+        """
+        return self.detect(text)
+    
     def _extract_context(self, text: str, start: int, end: int, window: int = 30) -> str:
         """
         Extract surrounding context for a finding.

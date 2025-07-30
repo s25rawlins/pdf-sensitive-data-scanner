@@ -42,6 +42,10 @@ markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
+filterwarnings = [
+    # Ignore deprecation warning from clickhouse-connect about utcfromtimestamp
+    "ignore:datetime.datetime.utcfromtimestamp\\(\\) is deprecated:DeprecationWarning:clickhouse_connect",
+]
 
 [tool.coverage.run]
 source = ["app"]
@@ -81,10 +85,11 @@ strict_equality = true
 
 [[tool.mypy.overrides]]
 module = [
-    "PyPDF2.*",
+    "pypdf.*",
     "pdfplumber.*",
     "reportlab.*",
     "clickhouse_driver.*",
+    "clickhouse_connect.*",
     "spacy.*",
     "fitz.*",
 ]
