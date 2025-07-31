@@ -44,7 +44,7 @@ def tests(session: nox.Session) -> None:
     session.run("pytest", *args)
 
 
-@nox.session(python=["3.11"])
+@nox.session(python=["3.12"])
 def test_unit(session: nox.Session) -> None:
     """Run only unit tests (fast tests)."""
     session.install("-r", "requirements.txt")
@@ -59,7 +59,7 @@ def test_unit(session: nox.Session) -> None:
     )
 
 
-@nox.session(python=["3.11"])
+@nox.session(python=["3.12"])
 def test_integration(session: nox.Session) -> None:
     """Run integration tests (requires external services)."""
     session.install("-r", "requirements.txt")
@@ -78,7 +78,7 @@ def test_integration(session: nox.Session) -> None:
     )
 
 
-@nox.session(python=["3.11"])
+@nox.session(python=["3.12"])
 def lint(session: nox.Session) -> None:
     """Run linters on the codebase."""
     session.install(*LINT_DEPENDENCIES)
@@ -88,7 +88,7 @@ def lint(session: nox.Session) -> None:
     session.run("flake8", *SOURCE_FILES)
 
 
-@nox.session(python=["3.11"])
+@nox.session(python=["3.12"])
 def format(session: nox.Session) -> None:
     """Format code with black and isort."""
     session.install("black", "isort")
@@ -97,7 +97,7 @@ def format(session: nox.Session) -> None:
     session.run("isort", *SOURCE_FILES)
 
 
-@nox.session(python=["3.11"])
+@nox.session(python=["3.12"])
 def type_check(session: nox.Session) -> None:
     """Run type checking with mypy."""
     session.install("-r", "requirements.txt")
@@ -106,7 +106,7 @@ def type_check(session: nox.Session) -> None:
     session.run("mypy", "app", "--ignore-missing-imports")
 
 
-@nox.session(python=["3.11"])
+@nox.session(python=["3.12"])
 def safety(session: nox.Session) -> None:
     """Check for security vulnerabilities in dependencies."""
     session.install("safety")
@@ -114,7 +114,7 @@ def safety(session: nox.Session) -> None:
     session.run("safety", "check", "--file=requirements.txt")
 
 
-@nox.session(python=["3.11"])
+@nox.session(python=["3.12"])
 def docs(session: nox.Session) -> None:
     """Generate documentation."""
     session.install("sphinx", "sphinx-autodoc-typehints", "sphinx-rtd-theme")
@@ -124,7 +124,7 @@ def docs(session: nox.Session) -> None:
     session.run("sphinx-build", "-b", "html", "source", "build/html")
 
 
-@nox.session(python=["3.11"])
+@nox.session(python=["3.12"])
 def dev(session: nox.Session) -> None:
     """Create development environment with all dependencies."""
     session.install("-r", "requirements.txt")
@@ -136,7 +136,7 @@ def dev(session: nox.Session) -> None:
     session.log("Run 'nox -s serve' to start the development server")
 
 
-@nox.session(python=["3.11"])
+@nox.session(python=["3.12"])
 def serve(session: nox.Session) -> None:
     """Run the development server."""
     session.install("-r", "requirements.txt")
@@ -153,7 +153,7 @@ def serve(session: nox.Session) -> None:
     )
 
 
-@nox.session(python=["3.11"])
+@nox.session(python=["3.12"])
 def coverage_report(session: nox.Session) -> None:
     """Generate and display coverage report."""
     session.install("coverage[toml]")
@@ -167,7 +167,7 @@ def coverage_report(session: nox.Session) -> None:
         webbrowser.open(f"file://{coverage_file}")
 
 
-@nox.session(python=["3.11"])
+@nox.session(python=["3.12"])
 def clean(session: nox.Session) -> None:
     """Clean up temporary files and build artifacts."""
     patterns = [
