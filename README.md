@@ -255,11 +255,14 @@ NEXT_PUBLIC_API_URL=http://localhost:8000/api
 
 ## Testing
 
-The project includes comprehensive test coverage:
+The project includes comprehensive test coverage with multiple testing approaches:
+
+### Backend Testing with Pytest
 
 ```bash
-# Run all backend tests
 cd backend
+
+# Run all tests
 pytest
 
 # Run with coverage report
@@ -267,10 +270,56 @@ pytest --cov=app --cov-report=html
 
 # Run specific test file
 pytest tests/test_detector.py -v
+```
 
-# Run frontend tests
+### Backend Testing with Nox (Recommended)
+
+Nox provides automated testing in isolated environments with predefined sessions:
+
+```bash
+cd backend
+
+# Install nox
+pip install nox
+
+# Run default sessions (tests, lint, type_check)
+nox
+
+# Run specific sessions
+nox -s tests          # Run all tests with coverage
+nox -s test_unit      # Run only unit tests (fast)
+nox -s test_integration  # Run integration tests
+nox -s lint           # Run linters (black, isort, flake8)
+nox -s format         # Auto-format code
+nox -s type_check     # Run mypy type checking
+nox -s safety         # Check for security vulnerabilities
+nox -s coverage_report  # Generate and display coverage report
+
+# List all available sessions
+nox --list
+
+# Run tests with specific Python version
+nox -s tests -p 3.12
+
+# Development workflow
+nox -s dev            # Set up development environment
+nox -s serve          # Run development server
+nox -s clean          # Clean up temporary files
+```
+
+### Frontend Testing
+
+```bash
 cd frontend
+
+# Run tests
 npm test
+
+# Run tests in watch mode
+npm test -- --watch
+
+# Run tests with coverage
+npm test -- --coverage
 ```
 
 ## Performance Characteristics
