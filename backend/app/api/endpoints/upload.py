@@ -84,7 +84,8 @@ async def process_pdf_async(pdf_data: bytes, filename: str) -> Dict:
     loop = asyncio.get_event_loop()
     processor = create_pdf_processor()
     
-    # Run CPU-intensive processing in thread pool
+    # Run PDF processing in a separate thread from the async event loop.
+    # This prevents blocking other async tasks, even though CPU work still runs one at a time due to Python's GIL.
     result = await loop.run_in_executor(
         None,
         processor.process_pdf,
@@ -112,7 +113,6 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
 
     validate_file_extension(file.filename)
     
-    # Read file content
     try:
         pdf_data = await file.read()
     except Exception as e:
@@ -124,7 +124,6 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
     
     validate_file_size(len(pdf_data))
     
-    # Generate unique document ID
     document_id = str(uuid.uuid4())
     upload_timestamp = datetime.utcnow()
     
@@ -150,22 +149,43 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
             
             # Store findings
             for finding in result.findings:
-                await db_client.insert_finding(
-                    document_id=document_id,
-                    finding_type=finding.type.value,
-                    value=finding.value,
-                    page_number=getattr(finding, 'page_number', 1),
-                    confidence=finding.confidence,
-                    context=finding.context,
-                )
+                try:
+                    await db_client.insert_finding(
+                        document_id=document_id,
+                        finding_type=finding.type.value,
+                        value=finding.value,
+                        page_number=getattr(finding, 'page_number', 1),
+                        confidence=finding.confidence,
+                        context=finding.context,
+                    )
+                except Exception as e:
+                    # Log error but continue processing other findings
+                    logger.error(f"Failed to insert finding: {e}")
             
             # Store metrics if enabled
             if settings.enable_metrics:
                 try:
+                    # Insert processing time metric
                     await db_client.insert_metric(
                         document_id=document_id,
                         metric_type="processing_time",
                         value=result.processing_time_ms,
+                        timestamp=upload_timestamp,
+                    )
+                    
+                    # Insert page count metric
+                    await db_client.insert_metric(
+                        document_id=document_id,
+                        metric_type="page_count",
+                        value=float(result.page_count),
+                        timestamp=upload_timestamp,
+                    )
+                    
+                    # Insert file size metric
+                    await db_client.insert_metric(
+                        document_id=document_id,
+                        metric_type="file_size",
+                        value=float(result.file_size),
                         timestamp=upload_timestamp,
                     )
                 except Exception as e:

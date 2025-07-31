@@ -7,7 +7,7 @@ for the FastAPI endpoints.
 
 import io
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -132,7 +132,7 @@ class TestAPIEndpoints:
                 "filename": "test.pdf",
                 "file_size": 1024,
                 "page_count": 2,
-                "upload_timestamp": datetime.utcnow(),
+                "upload_timestamp": datetime.now(timezone.utc),
                 "processing_time_ms": 150.5,
                 "status": "success",
                 "error_message": None,
@@ -146,7 +146,7 @@ class TestAPIEndpoints:
                 "page_number": 1,
                 "confidence": 1.0,
                 "context": "Email: test@example.com",
-                "detected_at": datetime.utcnow(),
+                "detected_at": datetime.now(timezone.utc),
             }]
             
             mock_db.count_documents = AsyncMock(return_value=1)
@@ -203,7 +203,7 @@ class TestAPIEndpoints:
                 "filename": "test.pdf",
                 "file_size": 1024,
                 "page_count": 1,
-                "upload_timestamp": datetime.utcnow(),
+                "upload_timestamp": datetime.now(timezone.utc),
                 "processing_time_ms": 100.0,
                 "status": "success",
                 "error_message": None,
@@ -218,7 +218,7 @@ class TestAPIEndpoints:
                     "page_number": 1,
                     "confidence": 1.0,
                     "context": "Email: test@example.com",
-                    "detected_at": datetime.utcnow(),
+                    "detected_at": datetime.now(timezone.utc),
                 },
                 {
                     "finding_id": "789e0123-e89b-12d3-a456-426614174000",
@@ -228,7 +228,7 @@ class TestAPIEndpoints:
                     "page_number": 1,
                     "confidence": 0.95,
                     "context": "SSN: 123-45-6789",
-                    "detected_at": datetime.utcnow(),
+                    "detected_at": datetime.now(timezone.utc),
                 }
             ]
             

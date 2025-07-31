@@ -147,9 +147,9 @@ class TestValidators:
     
     def test_validate_date_range_valid(self):
         """Test valid date ranges."""
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         yesterday = now - timedelta(days=1)
         tomorrow = now + timedelta(days=1)
         
@@ -164,9 +164,9 @@ class TestValidators:
     
     def test_validate_date_range_invalid(self):
         """Test invalid date ranges."""
-        from datetime import datetime, timedelta
-        
-        now = datetime.utcnow()
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
         yesterday = now - timedelta(days=1)
         
         # End before start

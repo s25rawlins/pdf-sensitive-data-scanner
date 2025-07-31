@@ -5,7 +5,7 @@ This module tests edge cases and error scenarios in the findings endpoint.
 """
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch, ANY
 from uuid import uuid4
 
@@ -71,7 +71,7 @@ class TestFindingsEndpointCoverage:
             "filename": "test.pdf",
             "file_size": 1024,
             "page_count": 1,
-            "upload_timestamp": datetime.utcnow(),
+            "upload_timestamp": datetime.now(timezone.utc),
             "processing_time_ms": 100.0,
             "status": "success",
             "error_message": None
@@ -124,7 +124,7 @@ class TestFindingsEndpointCoverage:
                 "page_number": 1,
                 "confidence": 0.95,
                 "context": "Email: test@example.com",
-                "detected_at": datetime.utcnow()
+                "detected_at": datetime.now(timezone.utc)
             }
         ]
         
@@ -159,7 +159,7 @@ class TestFindingsEndpointCoverage:
             "filename": "empty.pdf",
             "file_size": 1024,
             "page_count": 1,
-            "upload_timestamp": datetime.utcnow(),
+            "upload_timestamp": datetime.now(timezone.utc),
             "processing_time_ms": 100.0,
             "status": "success",
             "error_message": None

@@ -6,7 +6,7 @@ connection management, queries, and error handling.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -118,7 +118,7 @@ class TestClickHouseClient:
             filename="test.pdf",
             file_size=1024,
             page_count=5,
-            upload_timestamp=datetime.utcnow(),
+            upload_timestamp=datetime.now(timezone.utc),
             processing_time_ms=150.5,
             status=ProcessingStatus.SUCCESS.value,
             error_message=None
@@ -157,7 +157,7 @@ class TestClickHouseClient:
             document_id=doc_id,
             metric_type=MetricType.PROCESSING_TIME.value,
             value=150.5,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         
         mock_client.execute.assert_called_once()
@@ -173,7 +173,7 @@ class TestClickHouseClient:
             "test.pdf",
             1024,
             5,
-            datetime.utcnow(),
+            datetime.now(timezone.utc),
             150.5,
             "success",
             None
@@ -199,8 +199,8 @@ class TestClickHouseClient:
     async def test_get_documents(self, clickhouse_client, mock_client):
         """Test retrieving multiple documents."""
         mock_client.execute.return_value = [
-            (str(uuid4()), "doc1.pdf", 1024, 5, datetime.utcnow(), 150.5, "success", None),
-            (str(uuid4()), "doc2.pdf", 2048, 10, datetime.utcnow(), 200.0, "success", None),
+            (str(uuid4()), "doc1.pdf", 1024, 5, datetime.now(timezone.utc), 150.5, "success", None),
+            (str(uuid4()), "doc2.pdf", 2048, 10, datetime.now(timezone.utc), 200.0, "success", None),
         ]
         
         results = await clickhouse_client.get_documents(limit=10, offset=0)
@@ -214,8 +214,8 @@ class TestClickHouseClient:
         """Test retrieving findings for a document."""
         doc_id = str(uuid4())
         mock_client.execute.return_value = [
-            (str(uuid4()), doc_id, "email", "test@example.com", 1, 0.95, "Email: test@example.com", datetime.utcnow()),
-            (str(uuid4()), doc_id, "ssn", "123-45-6789", 2, 0.90, "SSN: 123-45-6789", datetime.utcnow()),
+            (str(uuid4()), doc_id, "email", "test@example.com", 1, 0.95, "Email: test@example.com", datetime.now(timezone.utc)),
+            (str(uuid4()), doc_id, "ssn", "123-45-6789", 2, 0.90, "SSN: 123-45-6789", datetime.now(timezone.utc)),
         ]
         
         results = await clickhouse_client.get_findings_by_document(doc_id)
@@ -360,7 +360,7 @@ class TestClickHouseClientErrorHandling:
                     filename="test.pdf",
                     file_size=1024,
                     page_count=5,
-                    upload_timestamp=datetime.utcnow(),
+                    upload_timestamp=datetime.now(timezone.utc),
                     processing_time_ms=150.5,
                     status=ProcessingStatus.SUCCESS.value
                 )

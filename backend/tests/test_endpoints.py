@@ -6,7 +6,7 @@ proper coverage of error handling and edge cases.
 """
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch, ANY
 from uuid import uuid4
 
@@ -126,7 +126,7 @@ class TestFindingsEndpoint:
                 "filename": "test.pdf",
                 "file_size": 1024,
                 "page_count": 1,
-                "upload_timestamp": datetime.utcnow(),
+                "upload_timestamp": datetime.now(timezone.utc),
                 "processing_time_ms": 100.0,
                 "status": "success",
                 "error_message": None
@@ -141,7 +141,7 @@ class TestFindingsEndpoint:
                 "page_number": 1,
                 "confidence": 0.95,
                 "context": "Email: test@example.com",
-                "detected_at": datetime.utcnow()
+                "detected_at": datetime.now(timezone.utc)
             }
         ]
         
@@ -189,7 +189,7 @@ class TestFindingsEndpoint:
             "filename": "test.pdf",
             "file_size": 1024,
             "page_count": 2,
-            "upload_timestamp": datetime.utcnow(),
+            "upload_timestamp": datetime.now(timezone.utc),
             "processing_time_ms": 100.0,
             "status": "success",
             "error_message": None
@@ -203,7 +203,7 @@ class TestFindingsEndpoint:
                 "page_number": 1,
                 "confidence": 0.95,
                 "context": "Email: test@example.com",
-                "detected_at": datetime.utcnow()
+                "detected_at": datetime.now(timezone.utc)
             },
             {
                 "finding_id": str(uuid4()),
@@ -213,7 +213,7 @@ class TestFindingsEndpoint:
                 "page_number": 2,
                 "confidence": 0.90,
                 "context": "SSN: 123-45-6789",
-                "detected_at": datetime.utcnow()
+                "detected_at": datetime.now(timezone.utc)
             }
         ]
         

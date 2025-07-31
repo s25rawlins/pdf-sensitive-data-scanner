@@ -89,15 +89,16 @@ class TestUploadEndpointCoverage:
                     with patch("app.api.endpoints.upload.datetime") as mock_datetime:
                         mock_datetime.utcnow.return_value = datetime(2024, 1, 1)
                         
-                        result = await upload_pdf(mock_file)
+                        with pytest.raises(HTTPException) as exc_info:
+                            await upload_pdf(mock_file)
                         
-                        assert result["status"] == "failed"
-                        assert "Processing failed" in result["message"]
+                        assert exc_info.value.status_code == 500
+                        assert "Failed to process PDF" in str(exc_info.value.detail)
                         
                         # Check that document was inserted with failed status
                         mock_db.insert_document.assert_called_once()
                         call_args = mock_db.insert_document.call_args[1]
-                        assert call_args["status"] == ProcessingStatus.FAILED
+                        assert call_args["status"] == "failed"
                         assert call_args["error_message"] == "Processing failed"
     
     @pytest.mark.asyncio
@@ -114,6 +115,7 @@ class TestUploadEndpointCoverage:
         mock_result.page_count = 5
         mock_result.processing_time_ms = 250.5
         mock_result.file_size = 2048
+        mock_result.status = "success"
         mock_processor.process_pdf.return_value = mock_result
         
         mock_db = AsyncMock()
@@ -152,6 +154,7 @@ class TestUploadEndpointCoverage:
         mock_result.page_count = 1
         mock_result.processing_time_ms = 100.0
         mock_result.file_size = 1024
+        mock_result.status = "success"
         mock_processor.process_pdf.return_value = mock_result
         
         mock_db = AsyncMock()
@@ -167,7 +170,7 @@ class TestUploadEndpointCoverage:
                             await upload_pdf(mock_file)
                         
                         assert exc_info.value.status_code == 500
-                        assert "Database error" in str(exc_info.value.detail)
+                        assert "An unexpected error occurred while processing the PDF" in str(exc_info.value.detail)
     
     @pytest.mark.asyncio
     async def test_upload_pdf_finding_insert_continues_on_error(self):
@@ -179,18 +182,17 @@ class TestUploadEndpointCoverage:
         mock_processor = MagicMock()
         mock_result = MagicMock()
         mock_result.document_id = str(uuid4())
-        mock_result.findings = [
-            MagicMock(
-                finding_type="email",
-                value="test@example.com",
-                page_number=1,
-                confidence=0.95,
-                context="Email: test@example.com"
-            )
-        ]
+        mock_finding = MagicMock()
+        mock_finding.type.value = "email"
+        mock_finding.value = "test@example.com"
+        mock_finding.page_number = 1
+        mock_finding.confidence = 0.95
+        mock_finding.context = "Email: test@example.com"
+        mock_result.findings = [mock_finding]
         mock_result.page_count = 1
         mock_result.processing_time_ms = 100.0
         mock_result.file_size = 1024
+        mock_result.status = "success"
         mock_processor.process_pdf.return_value = mock_result
         
         mock_db = AsyncMock()

@@ -5,13 +5,16 @@ This module provides common fixtures and test utilities used across
 all test modules.
 """
 
+import logging
 import os
-from typing import Generator
-from unittest.mock import patch
+from datetime import datetime, timezone
+from typing import Dict, Generator, List
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+# Set test environment variables
 os.environ["TESTING"] = "true"
 os.environ["CLICKHOUSE_HOST"] = "localhost"
 os.environ["CLICKHOUSE_PORT"] = "9000"
@@ -25,6 +28,9 @@ def test_client() -> Generator[TestClient, None, None]:
     
     This fixture ensures the TestClient is properly configured
     with the correct host header to pass TrustedHostMiddleware.
+    
+    Yields:
+        TestClient: Configured test client for API testing.
     """
     from app.main import app
     
@@ -33,7 +39,8 @@ def test_client() -> Generator[TestClient, None, None]:
     # Override the host header for all requests
     original_request = client.request
     
-    def request_with_host_header(method, url, **kwargs):
+    def request_with_host_header(method: str, url: str, **kwargs) -> object:
+        """Add host header to all requests."""
         headers = kwargs.get("headers", {})
         if headers is None:
             headers = {}
@@ -53,6 +60,9 @@ def mock_settings():
     
     This fixture automatically mocks the settings to ensure
     tests don't depend on environment variables.
+    
+    Yields:
+        MagicMock: Mocked get_settings function.
     """
     with patch("app.core.config.get_settings") as mock_get_settings:
         from app.core.config import Settings
@@ -70,6 +80,9 @@ def mock_settings():
             clickhouse_database="test_pdf_scanner",
             clickhouse_user="default",
             clickhouse_password="",
+            enable_metrics=True,
+            max_concurrent_uploads=5,
+            processing_timeout=300,
         )
         
         mock_get_settings.return_value = test_settings
@@ -83,9 +96,10 @@ def mock_db_client():
     
     This fixture provides a mock database client to avoid
     actual database connections during tests.
-    """
-    from unittest.mock import AsyncMock, MagicMock
     
+    Returns:
+        MagicMock: Mocked database client with async methods.
+    """
     mock_client = MagicMock()
     mock_client.initialize = AsyncMock()
     mock_client.close = AsyncMock()
@@ -116,6 +130,12 @@ def mock_global_db_client(mock_db_client):
     
     This ensures all tests use the mock client instead of
     trying to connect to a real database.
+    
+    Args:
+        mock_db_client: The mock database client fixture.
+        
+    Yields:
+        MagicMock: The mock database client.
     """
     with patch("app.main.db_client", mock_db_client):
         with patch("app.api.endpoints.upload.get_db_client", return_value=mock_db_client):
@@ -128,17 +148,20 @@ def sample_pdf_content() -> bytes:
     """
     Generate sample PDF content for testing.
     
+    Creates a two-page PDF with test data including emails and SSNs.
+    
     Returns:
-        Bytes representing a valid PDF file.
+        bytes: Binary content of a valid PDF file.
     """
     import io
+    
     from reportlab.lib.pagesizes import letter
     from reportlab.pdfgen import canvas
     
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
     
-    # Add test content
+    # Add test content to first page
     pdf.drawString(100, 750, "Test PDF Document")
     pdf.drawString(100, 700, "Email: test@example.com")
     pdf.drawString(100, 650, "SSN: 123-45-6789")
@@ -155,15 +178,13 @@ def sample_pdf_content() -> bytes:
 
 
 @pytest.fixture
-def sample_findings():
+def sample_findings() -> List[Dict]:
     """
     Generate sample findings for testing.
     
     Returns:
-        List of finding dictionaries.
+        List[Dict]: List of finding dictionaries with test data.
     """
-    from datetime import datetime
-    
     return [
         {
             "finding_id": "123e4567-e89b-12d3-a456-426614174000",
@@ -173,7 +194,7 @@ def sample_findings():
             "page_number": 1,
             "confidence": 1.0,
             "context": "Email: test@example.com",
-            "detected_at": datetime.utcnow(),
+            "detected_at": datetime.now(timezone.utc),
         },
         {
             "finding_id": "456e7890-e89b-12d3-a456-426614174001",
@@ -183,13 +204,18 @@ def sample_findings():
             "page_number": 1,
             "confidence": 0.95,
             "context": "SSN: 123-45-6789",
-            "detected_at": datetime.utcnow(),
+            "detected_at": datetime.now(timezone.utc),
         },
     ]
 
 
 def pytest_configure(config):
-    """Configure pytest with custom markers."""
+    """
+    Configure pytest with custom markers.
+    
+    Args:
+        config: Pytest configuration object.
+    """
     config.addinivalue_line(
         "markers", "integration: mark test as integration test"
     )
@@ -199,8 +225,21 @@ def pytest_configure(config):
 
 
 def pytest_sessionstart(session):
-    """Setup test environment before running tests."""
-
+    """
+    Setup test environment before running tests.
+    
+    Args:
+        session: Pytest session object.
+    """
+    # Ensure testing environment is set
     os.environ["TESTING"] = "true"
     
-    import logging
+    # Configure logging for tests
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    
+    # Disable specific noisy loggers
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
