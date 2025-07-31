@@ -8,6 +8,7 @@ pypdf==5.9.0
 pdfplumber==0.10.3
 pymupdf==1.23.8
 reportlab==4.0.7
+pillow==10.1.0
 
 # Data processing
 spacy==3.7.2
