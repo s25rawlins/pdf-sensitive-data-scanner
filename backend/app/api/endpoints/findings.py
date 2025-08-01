@@ -96,6 +96,12 @@ async def get_all_findings(
     Returns:
         Paginated list of documents with findings.
     """
+    logger.info(
+        f"Getting findings - page: {page}, page_size: {page_size}, "
+        f"doc_id: {doc_id}, finding_type: {finding_type}, "
+        f"start_date: {start_date}, end_date: {end_date}"
+    )
+    
     try:
         db_client = get_db_client()
 
@@ -164,7 +170,7 @@ async def get_all_findings(
         )
         
     except Exception as e:
-        logger.error(f"Failed to retrieve findings: {e}")
+        logger.error(f"Failed to retrieve findings: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve findings from database",
@@ -246,6 +252,7 @@ async def get_findings_summary() -> Dict:
     Returns:
         Dictionary with overall statistics.
     """
+    
     try:
         db_client = get_db_client()
         
@@ -261,7 +268,7 @@ async def get_findings_summary() -> Dict:
         }
         
     except Exception as e:
-        logger.error(f"Failed to retrieve summary statistics: {e}")
+        logger.error(f"Failed to retrieve summary statistics: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve summary statistics",

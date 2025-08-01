@@ -74,6 +74,7 @@ class ClickHouseClient:
             
         self._client: Optional[Any] = None
         self._initialized = False
+        self._lock = asyncio.Lock()  # Add lock for thread safety
         
         logger.info(f"Using {'cloud' if self.use_cloud_driver else 'native'} driver for ClickHouse connection")
     
@@ -129,18 +130,42 @@ class ClickHouseClient:
         except ImportError:
             raise DatabaseError("clickhouse-driver is required for native ClickHouse connections")
     
+    def _get_new_client(self):
+        """Create a new client connection for thread-safe operations."""
+        if self.use_cloud_driver:
+            return self._create_cloud_client()
+        else:
+            return self._create_native_client()
+    
     def _execute_query(self, query: str, params: Any = None) -> Any:
         """Execute a query using the appropriate driver."""
-        if self.use_cloud_driver:
-            # clickhouse-connect uses different methods for different query types
-            if query.strip().upper().startswith(('INSERT', 'CREATE', 'DROP', 'ALTER', 'DELETE', 'UPDATE')):
-                return self._client.command(query, parameters=params)
+        try:
+            # For cloud driver, create a new client for each query to avoid concurrency issues
+            if self.use_cloud_driver:
+                client = self._get_new_client()
+                try:
+                    # Ensure we're using the correct database
+                    client.command(f"USE {self.database}")
+                    
+                    if query.strip().upper().startswith(('INSERT', 'CREATE', 'DROP', 'ALTER', 'DELETE', 'UPDATE')):
+                        return client.command(query, parameters=params)
+                    else:
+                        result = client.query(query, parameters=params)
+                        return result.result_rows if hasattr(result, 'result_rows') else result
+                finally:
+                    # Cloud driver doesn't have explicit close
+                    pass
             else:
-                result = self._client.query(query, parameters=params)
-                return result.result_rows if hasattr(result, 'result_rows') else result
-        else:
-            # clickhouse-driver
-            return self._client.execute(query, params)
+                # For native driver, use the existing client
+                return self._client.execute(query, params)
+        except Exception as e:
+            logger.error(
+                f"Query execution failed: {e}\n"
+                f"Query: {query[:200]}...\n"
+                f"Params: {params}",
+                exc_info=True
+            )
+            raise
     
     def _initialize_sync(self) -> None:
         """Synchronous initialization of database connection and tables."""
@@ -158,14 +183,12 @@ class ClickHouseClient:
             logger.error(f"ClickHouse connection test failed: {e}")
             raise
         
-        # Create database if it doesn't exist
         try:
             self._execute_query(f"CREATE DATABASE IF NOT EXISTS {self.database}")
             logger.info(f"Database {self.database} ready")
         except Exception as e:
             logger.warning(f"Could not create database (might already exist): {e}")
         
-        # Switch to our database
         self._execute_query(f"USE {self.database}") 
         
         self._create_tables()
@@ -245,7 +268,7 @@ class ClickHouseClient:
             DatabaseError: If initialization fails.
         """
         try:
-            # Run in executor to avoid blocking
+            # Run in executor to avoid blocking async tasks
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._initialize_sync)
             self._initialized = True
@@ -261,17 +284,18 @@ class ClickHouseClient:
         Returns:
             True if healthy, False otherwise.
         """
-        if not self._initialized or not self._client:
+        if not self._initialized:
             return False
         
         try:
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                self._execute_query,
-                "SELECT 1"
-            )
-            return len(result) > 0 if result else True
+            async with self._lock:
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    self._execute_query,
+                    "SELECT 1"
+                )
+                return len(result) > 0 if result else True
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             return False
@@ -286,21 +310,18 @@ class ClickHouseClient:
         try:
             loop = asyncio.get_event_loop()
             
-            # Test basic connectivity
             version = await loop.run_in_executor(
                 None,
                 self._execute_query,
                 "SELECT version()"
             )
             
-            # Check database
             current_db = await loop.run_in_executor(
                 None,
                 self._execute_query,
                 "SELECT currentDatabase()"
             )
             
-            # List tables
             tables = await loop.run_in_executor(
                 None,
                 self._execute_query,
@@ -399,7 +420,11 @@ class ClickHouseClient:
             
             logger.debug(f"Inserted document {document_id}")
         except Exception as e:
-            logger.error(f"Failed to insert document: {e}")
+            logger.error(
+                f"Failed to insert document {document_id}: {e}\n"
+                f"Filename: {filename}, Status: {status}",
+                exc_info=True
+            )
             raise DatabaseError(f"Failed to insert document: {e}")
     
     async def insert_finding(
@@ -468,7 +493,11 @@ class ClickHouseClient:
             
             logger.debug(f"Inserted finding for document {document_id}")
         except Exception as e:
-            logger.error(f"Failed to insert finding: {e}")
+            logger.error(
+                f"Failed to insert finding for document {document_id}: {e}\n"
+                f"Type: {finding_type}, Value: {value[:50]}...",
+                exc_info=True
+            )
             raise DatabaseError(f"Failed to insert finding: {e}")
     
     async def insert_metric(
@@ -665,7 +694,11 @@ class ClickHouseClient:
             return documents
             
         except Exception as e:
-            logger.error(f"Failed to get documents: {e}")
+            logger.error(
+                f"Failed to get documents: {e}\n"
+                f"Query params - limit: {limit}, offset: {offset}, doc_id: {doc_id}",
+                exc_info=True
+            )
             raise DatabaseError(f"Failed to get documents: {e}")
     
     async def count_documents(
@@ -795,7 +828,11 @@ class ClickHouseClient:
             return findings
             
         except Exception as e:
-            logger.error(f"Failed to get findings: {e}")
+            logger.error(
+                f"Failed to get findings for document {document_id}: {e}\n"
+                f"Finding type filter: {finding_type}",
+                exc_info=True
+            )
             raise DatabaseError(f"Failed to get findings: {e}")
     
     async def get_summary_statistics(self) -> Dict[str, Any]:
@@ -826,7 +863,6 @@ class ClickHouseClient:
                 """
             )
             
-            # Get findings stats
             findings_stats = await loop.run_in_executor(
                 None,
                 self._execute_query,
@@ -839,7 +875,6 @@ class ClickHouseClient:
                 """
             )
             
-            # Get documents with findings
             docs_with_findings = await loop.run_in_executor(
                 None,
                 self._execute_query,

@@ -116,7 +116,7 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
     try:
         pdf_data = await file.read()
     except Exception as e:
-        logger.error(f"Failed to read uploaded file: {e}")
+        logger.error(f"Failed to read uploaded file {file.filename}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Failed to read uploaded file",
@@ -133,10 +133,9 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
         db_client = get_db_client()
         
         try:
-            logger.info(f"Processing PDF: {file.filename} (ID: {document_id})")
             result = await process_pdf_async(pdf_data, file.filename)
             
-            # Store document metadata
+            logger.info(f"Storing document metadata for: {document_id}")
             await db_client.insert_document(
                 document_id=document_id,
                 filename=file.filename,
@@ -146,8 +145,8 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
                 processing_time_ms=result.processing_time_ms,
                 status=result.status,
             )
+            logger.info(f"Document metadata stored successfully: {document_id}")
             
-            # Store findings
             for finding in result.findings:
                 try:
                     await db_client.insert_finding(
@@ -162,10 +161,8 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
                     # Log error but continue processing other findings
                     logger.error(f"Failed to insert finding: {e}")
             
-            # Store metrics if enabled
             if settings.enable_metrics:
                 try:
-                    # Insert processing time metric
                     await db_client.insert_metric(
                         document_id=document_id,
                         metric_type="processing_time",
@@ -173,7 +170,6 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
                         timestamp=upload_timestamp,
                     )
                     
-                    # Insert page count metric
                     await db_client.insert_metric(
                         document_id=document_id,
                         metric_type="page_count",
@@ -181,7 +177,6 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
                         timestamp=upload_timestamp,
                     )
                     
-                    # Insert file size metric
                     await db_client.insert_metric(
                         document_id=document_id,
                         metric_type="file_size",
@@ -192,7 +187,7 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
                     # Log metric insertion error but don't fail the request
                     logger.error(f"Failed to insert metric: {e}")
             
-            logger.info(f"Successfully processed {file.filename} with {len(result.findings)} findings")
+            logger.info(f"PDF processed: {file.filename} - {len(result.findings)} findings found")
             
             return {
                 "document_id": document_id,
@@ -252,7 +247,26 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
             )
             
         except Exception as e:
-            logger.error(f"Unexpected error processing PDF: {e}")
+            logger.error(
+                f"Unexpected error processing PDF {file.filename} (ID: {document_id}): {e}",
+                exc_info=True
+            )
+            
+            # Try to store failed processing attempt
+            try:
+                await db_client.insert_document(
+                    document_id=document_id,
+                    filename=file.filename,
+                    file_size=len(pdf_data),
+                    page_count=0,
+                    upload_timestamp=upload_timestamp,
+                    processing_time_ms=0,
+                    status="failed",
+                    error_message=str(e),
+                )
+            except Exception as db_error:
+                logger.error(f"Failed to store error document: {db_error}", exc_info=True)
+            
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="An unexpected error occurred while processing the PDF",
